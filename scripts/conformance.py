@@ -2,6 +2,7 @@
 """Conformance gates — run with: python scripts/conformance.py"""
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -190,8 +191,124 @@ def gate_k(files):
             fail("k", f"__pycache__ file is tracked: {f}")
 
 
+# ── l. No string-built SQL ────────────────────────────────────────────────────
+# Constitution 4: fail closed — no dynamic query construction.
+_SQL_KW = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b", re.IGNORECASE)
+
+
+def _sql_in_fstring(node):
+    """Return True if a JoinedStr (f-string) contains a SQL keyword in any constant part."""
+    for part in ast.walk(node):
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            if _SQL_KW.search(part.value):
+                return True
+    return False
+
+
+def gate_l(files):
+    for f in files:
+        if not str(f).endswith(".py"):
+            continue
+        src = read(f)
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        norm = str(f).replace("\\", "/")
+        for node in ast.walk(tree):
+            # f-string with SQL keyword
+            if isinstance(node, ast.JoinedStr) and _sql_in_fstring(node):
+                fail("l", f"{norm}: f-string contains SQL keyword (use parameterised queries)")
+                break
+            # "SELECT ..." % (...) or "SELECT ..." + ...
+            if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
+                if (
+                    isinstance(node.left, ast.Constant)
+                    and isinstance(node.left.value, str)
+                    and _SQL_KW.search(node.left.value)
+                ):
+                    fail("l", f"{norm}: %-format or +-concat contains SQL keyword (use parameterised queries)")
+                    break
+            # "SELECT ...".format(...)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "format"
+                and isinstance(node.func.value, ast.Constant)
+                and isinstance(node.func.value.value, str)
+                and _SQL_KW.search(node.func.value.value)
+            ):
+                fail("l", f"{norm}: .format() on SQL string (use parameterised queries)")
+                break
+
+
+# ── m. No Match-Not-Found-Error ───────────────────────────────────────────────
+# Spec: matching returns a status enum, never raises.
+_MATCH_NOT_FOUND = "Match" "NotFoundError"
+
+
+def gate_m(files):
+    for f in files:
+        if not str(f).endswith(".py"):
+            continue
+        if _MATCH_NOT_FOUND in read(f):
+            fail("m", f"{str(f).replace(chr(92), '/')}: contains " + _MATCH_NOT_FOUND + " (matching returns a status, never raises)")
+
+
+# ── n. No input() in services/ ────────────────────────────────────────────────
+# IO belongs at adapters, not services. AST walk avoids false positives from
+# boundary-header docstrings that mention the prohibition by name.
+def gate_n(files):
+    for f in files:
+        norm = str(f).replace("\\", "/")
+        if not norm.startswith("services/") or not norm.endswith(".py"):
+            continue
+        src = read(f)
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "input"
+            ):
+                fail("n", f"{norm}: input() in services/ (IO belongs at adapters)")
+                break
+
+
+# ── o. No module-level telemetry global ───────────────────────────────────────
+# Module 05: metrics are injected, never singletons.
+_IMPORT_TELEMETRY = "import" + " telemetry"
+_CORE_TELEMETRY = "core" + ".telemetry"
+
+
+def gate_o(files):
+    for f in files:
+        if not str(f).endswith(".py"):
+            continue
+        text = read(f)
+        norm = str(f).replace("\\", "/")
+        if _IMPORT_TELEMETRY in text or _CORE_TELEMETRY in text:
+            fail("o", f"{norm}: contains telemetry import (metrics injected, not singletons)")
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "telemetry":
+                        fail("o", f"{norm}: module-level `telemetry =` (metrics injected, not singletons)")
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name) and node.target.id == "telemetry":
+                    fail("o", f"{norm}: module-level `telemetry =` (metrics injected, not singletons)")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
-GATES = [gate_a, gate_b, gate_c, gate_d, gate_e, gate_f, gate_g, gate_h, gate_i, gate_j, gate_k]
+GATES = [gate_a, gate_b, gate_c, gate_d, gate_e, gate_f, gate_g, gate_h, gate_i, gate_j, gate_k, gate_l, gate_m, gate_n, gate_o]
 
 
 def main():

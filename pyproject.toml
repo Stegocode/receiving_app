@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "receiving-app"
@@ -9,7 +9,7 @@ description = "Generic warehouse receiving application"
 requires-python = ">=3.11"
 dependencies = [
     "python-dotenv",
-    "pywin32",
+    "pywin32; sys_platform == 'win32'",
     "playwright",
     "selenium",
 ]
@@ -22,6 +22,12 @@ dev = [
     "pytest>=8",
     "pre-commit>=3.7",
 ]
+
+[tool.setuptools]
+py-modules = ["config"]
+
+[tool.setuptools.packages.find]
+include = ["core*", "services*", "adapters*"]
 
 [tool.ruff]
 target-version = "py311"
