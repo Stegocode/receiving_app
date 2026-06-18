@@ -29,15 +29,13 @@ def read(path):
 
 
 # ── a. Banned names ───────────────────────────────────────────────────────────
-# Adjacent literals avoid the banned strings appearing literally in this file.
+# Runtime "+" concatenation keeps the banned strings out of this source file.
 _ALWAYS_BANNED = [
     "Bas" + "co",  # client name
     "scott" + "t",  # operator username
+    "Home" + "Source",  # vendor name — use adapters/source.py
+    "Mon" + "day",  # vendor name — use adapters/sink.py
 ]
-_RESTRICTED = {
-    "Home" + "Source": "adapters/homesource.py",
-    "Mon" + "day": "adapters/monday.py",
-}
 
 
 def gate_a(files):
@@ -45,11 +43,8 @@ def gate_a(files):
         text = read(f)
         norm = str(f).replace("\\", "/")
         for name in _ALWAYS_BANNED:
-            if name in text:
+            if name in text or name in norm:
                 fail("a", f"{norm}: contains banned name '{name}'")
-        for name, allowed in _RESTRICTED.items():
-            if name in text and norm != allowed:
-                fail("a", f"{norm}: '{name}' only allowed in {allowed}")
 
 
 # ── b. Absolute paths ─────────────────────────────────────────────────────────
