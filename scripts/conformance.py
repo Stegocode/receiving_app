@@ -38,12 +38,18 @@ _ALWAYS_BANNED = [
 ]
 
 
+def banned_name_hit(name: str, text: str, path: str) -> bool:
+    """Return True if *name* appears (case-insensitively) in *text* or *path*."""
+    needle = name.lower()
+    return needle in text.lower() or needle in path.lower()
+
+
 def gate_a(files):
     for f in files:
         text = read(f)
         norm = str(f).replace("\\", "/")
         for name in _ALWAYS_BANNED:
-            if name in text or name in norm:
+            if banned_name_hit(name, text, norm):
                 fail("a", f"{norm}: contains banned name '{name}'")
 
 
