@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy type check
+        entry: mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: ["core", "services", "adapters", "config.py"]
+
+      - id: import-linter
+        name: import-linter layers
+        entry: lint-imports
+        language: system
+        pass_filenames: false
+
+      - id: conformance
+        name: conformance gates
+        entry: python scripts/conformance.py
+        language: system
+        pass_filenames: false
+        always_run: true

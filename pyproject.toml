@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "receiving-app"
@@ -9,7 +9,57 @@ description = "Generic warehouse receiving application"
 requires-python = ">=3.11"
 dependencies = [
     "python-dotenv",
-    "pywin32",
+    "pywin32; sys_platform == 'win32'",
     "playwright",
     "selenium",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.10",
+    "import-linter>=2.1",
+    "pytest>=8",
+    "pre-commit>=3.7",
+]
+
+[tool.setuptools]
+py-modules = ["config"]
+
+[tool.setuptools.packages.find]
+include = ["core*", "services*", "adapters*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["core", "services", "adapters"]
+
+[[tool.importlinter.contracts]]
+name = "core cannot import services or adapters"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["services", "adapters"]
+
+[[tool.importlinter.contracts]]
+name = "services cannot import adapters"
+type = "forbidden"
+source_modules = ["services"]
+forbidden_modules = ["adapters"]
+
+[[tool.importlinter.contracts]]
+name = "adapters cannot import services"
+type = "forbidden"
+source_modules = ["adapters"]
+forbidden_modules = ["services"]
