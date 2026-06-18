@@ -23,8 +23,11 @@ dev = [
     "pre-commit>=3.7",
 ]
 
+[project.scripts]
+receiving-app = "__main__:main"
+
 [tool.setuptools]
-py-modules = ["config"]
+py-modules = ["config", "__main__"]
 
 [tool.setuptools.packages.find]
 include = ["core*", "services*", "adapters*"]
@@ -42,7 +45,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts"]
+pythonpath = [".", "scripts"]
 
 [tool.importlinter]
 root_packages = ["core", "services", "adapters"]

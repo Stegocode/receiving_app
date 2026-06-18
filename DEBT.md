@@ -9,10 +9,8 @@ why, and the signal that should trigger resolving it.
 All .py files in this commit are stubs. Business logic, port implementations,
 and tests are implemented in T-02 through T-14.
 
-[DEBT-CI01] 2026-06-17 — No entry-point smoke test; `python -m receiving_app` retired.
-Deferred: a CI gate that launches the app and asserts a clean exit. Fixing flat-layout
-package discovery required deleting the root `receiving_app` package, which retired the
-original `python -m receiving_app` command — the app now starts via `python __main__.py`,
-and no gate proves it starts at all. Resolve in T-02: declare a canonical entry point
-([project.scripts]) and add a gate that runs it and asserts exit 0. Trigger: T-02, or the
-first ticket that touches startup/config wiring, whichever comes first.
+[DEBT-CI01] 2026-06-17 — RESOLVED 2026-06-18 (T-02)
+Canonical entry point declared as `receiving-app = "__main__:main"` in [project.scripts].
+Startup gate added as `tests/test_config.py::test_startup_gate` — calls __main__.main()
+in-process and asserts clean exit. `pythonpath` corrected to [".", "scripts"] so tests
+can import config and core.* alongside conformance.

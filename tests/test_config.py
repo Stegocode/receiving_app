@@ -1,0 +1,136 @@
+"""
+Owns: tests for config.validate() behavior and entry-point startup gate.
+Must not: import concrete adapters or read real credentials from disk.
+May import: config (reloaded per test), core.errors, stdlib.
+
+not_measured: real .env file on disk, actual filesystem paths, real adapter
+              credentials, real database connections, real network services.
+"""
+# Owns: tests for config.validate() and startup gate.
+# Must not: import concrete adapters or real credentials.
+# May import: config (reloaded), core.errors, stdlib.
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+from core.errors import ConfigError
+
+PROJECT_ROOT = Path(__file__).parent.parent
+
+_REQUIRED_VARS = [
+    "DB_PATH",
+    "LOG_DIR",
+    "DOWNLOAD_DIR",
+    "SOURCE_USERNAME",
+    "SOURCE_PASSWORD",
+    "SINK_API_TOKEN",
+    "SINK_BOARD_ID",
+    "SINK_ATTENTION_GROUP_ID",
+]
+
+_VALID_ENV = {
+    "DB_PATH": "/tmp/test.db",
+    "LOG_DIR": "/tmp/logs",
+    "DOWNLOAD_DIR": "/tmp/downloads",
+    "SOURCE_USERNAME": "testuser",
+    "SOURCE_PASSWORD": "testpass",
+    "SINK_API_TOKEN": "testtoken",
+    "SINK_BOARD_ID": "board123",
+    "SINK_ATTENTION_GROUP_ID": "group123",
+    "POLL_INTERVAL_SECS": "10",
+}
+
+
+def _reload(monkeypatch, env: dict):
+    """Clear all config vars from the environment, apply overrides, reload config."""
+    for var in _REQUIRED_VARS + ["POLL_INTERVAL_SECS"]:
+        monkeypatch.delenv(var, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    import config
+
+    return importlib.reload(config)
+
+
+def test_missing_all_required_vars_reported_together(monkeypatch):
+    """All required vars absent — ConfigError names every one in a single message."""
+    cfg = _reload(monkeypatch, {})
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    msg = str(exc.value)
+    for var in _REQUIRED_VARS:
+        assert var in msg, f"Expected '{var}' in error message, got:\n{msg}"
+
+
+def test_missing_one_var_named(monkeypatch):
+    """One var absent — ConfigError names it specifically."""
+    env = {**_VALID_ENV}
+    del env["SINK_API_TOKEN"]
+    cfg = _reload(monkeypatch, env)
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "SINK_API_TOKEN" in str(exc.value)
+
+
+def test_all_vars_present_no_exception(monkeypatch):
+    """All vars set — validate() returns without raising; accessors are populated."""
+    cfg = _reload(monkeypatch, _VALID_ENV)
+    cfg.validate(dotenv_path=None)
+    assert cfg.POLL_INTERVAL_SECS == 10
+    assert isinstance(cfg.DB_PATH, Path)
+    assert isinstance(cfg.LOG_DIR, Path)
+    assert isinstance(cfg.DOWNLOAD_DIR, Path)
+
+
+def test_poll_interval_defaults_to_10(monkeypatch):
+    """POLL_INTERVAL_SECS absent — defaults to 10 without error."""
+    env = {k: v for k, v in _VALID_ENV.items() if k != "POLL_INTERVAL_SECS"}
+    cfg = _reload(monkeypatch, env)
+    cfg.validate(dotenv_path=None)
+    assert cfg.POLL_INTERVAL_SECS == 10
+
+
+def test_poll_interval_invalid_raises(monkeypatch):
+    """Non-integer POLL_INTERVAL_SECS — ConfigError names the var."""
+    env = {**_VALID_ENV, "POLL_INTERVAL_SECS": "not_a_number"}
+    cfg = _reload(monkeypatch, env)
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "POLL_INTERVAL_SECS" in str(exc.value)
+
+
+def test_raises_config_error_not_bare_exception(monkeypatch):
+    """validate() raises ConfigError specifically, not a bare Exception."""
+    cfg = _reload(monkeypatch, {})
+    with pytest.raises(ConfigError):
+        cfg.validate(dotenv_path=None)
+
+
+def test_startup_gate(monkeypatch, capsys, tmp_path):
+    """Smoke gate: main() completes without exception when all required vars are set.
+
+    PASS: main() returns without raising, prints 'receiving_app ok'
+    KILL: main() raises any exception
+    not_measured: real DB, real adapters, real network, actual .env file on disk.
+    """
+    env = {
+        **_VALID_ENV,
+        "DB_PATH": str(tmp_path / "test.db"),
+        "LOG_DIR": str(tmp_path / "logs"),
+        "DOWNLOAD_DIR": str(tmp_path / "downloads"),
+    }
+    cfg = _reload(monkeypatch, env)
+    real_validate = cfg.validate
+    # Bypass .env file loading — env vars already set via monkeypatch.
+    monkeypatch.setattr(cfg, "validate", lambda: real_validate(dotenv_path=None))
+    # Load __main__.py by file path to avoid collision with pytest's own __main__.
+    spec = importlib.util.spec_from_file_location("app_main", PROJECT_ROOT / "__main__.py")
+    app_main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app_main)
+    app_main.main()
+    assert "receiving_app ok" in capsys.readouterr().out
