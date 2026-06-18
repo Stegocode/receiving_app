@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Conformance gates — run with: python scripts/conformance.py"""
+"""
+Conformance gates — run with: python scripts/conformance.py
+
+Owns: mechanical enforcement of all build-constitution rules across tracked files.
+Must not: modify any source file; must not perform network calls.
+May import: ast, re, subprocess, sys, pathlib (stdlib only).
+"""
 
 import ast
 import re
@@ -138,7 +144,7 @@ def gate_f(files):
         except SyntaxError:
             continue
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 start = node.lineno
                 end = node.end_lineno or start
                 length = end - start + 1
@@ -224,7 +230,7 @@ def gate_l(files):
             # "SELECT ..." % (...) or "SELECT ..." + ...
             if (
                 isinstance(node, ast.BinOp)
-                and isinstance(node.op, (ast.Mod, ast.Add))
+                and isinstance(node.op, ast.Mod | ast.Add)
                 and isinstance(node.left, ast.Constant)
                 and isinstance(node.left.value, str)
                 and _SQL_KW.search(node.left.value)
