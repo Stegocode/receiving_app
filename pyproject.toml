@@ -42,6 +42,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["scripts"]
 
 [tool.importlinter]
 root_packages = ["core", "services", "adapters"]
