@@ -68,3 +68,8 @@ def test_validate_quantity_zero():
 def test_from_dict_raises_validation_error_on_bad_data():
     with pytest.raises(ValidationError):
         from_dict({})
+
+
+def test_validate_invalid_timestamp():
+    problems = validate_record({**_VALID, "timestamp": "not-a-date"})
+    assert any("timestamp" in p for p in problems)

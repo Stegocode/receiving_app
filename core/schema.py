@@ -7,6 +7,7 @@ May import: stdlib, core.errors.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 from core.errors import ValidationError
 
@@ -65,6 +66,13 @@ def validate_record(data: dict) -> list[str]:
                 f"match_status: '{data['match_status']}' is not one of "
                 f"{sorted(_VALID_MATCH_STATUSES)}"
             )
+
+    ts = data.get("timestamp")
+    if isinstance(ts, str) and ts.strip():
+        try:
+            datetime.fromisoformat(ts)
+        except ValueError:
+            problems.append(f"timestamp: '{ts}' is not valid ISO-8601")
 
     qty = data.get("quantity")
     if qty is None:
