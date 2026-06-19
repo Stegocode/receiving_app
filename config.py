@@ -21,6 +21,7 @@ DB_PATH: Path
 LOG_DIR: Path
 DOWNLOAD_DIR: Path
 POLL_INTERVAL_SECS: int
+SOURCE_BASE_URL: str
 SOURCE_USERNAME: str
 SOURCE_PASSWORD: str
 SINK_API_TOKEN: str
@@ -46,8 +47,8 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
                      (useful in tests that set env vars directly).
     """
     global DB_PATH, LOG_DIR, DOWNLOAD_DIR, POLL_INTERVAL_SECS
-    global SOURCE_USERNAME, SOURCE_PASSWORD, SINK_API_TOKEN, SINK_BOARD_ID
-    global SINK_ATTENTION_GROUP_ID
+    global SOURCE_BASE_URL, SOURCE_USERNAME, SOURCE_PASSWORD
+    global SINK_API_TOKEN, SINK_BOARD_ID, SINK_ATTENTION_GROUP_ID
 
     if dotenv_path is not None:
         load_dotenv(dotenv_path=dotenv_path, override=False)
@@ -57,6 +58,7 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     db_path_raw = _require("DB_PATH", problems)
     log_dir_raw = _require("LOG_DIR", problems)
     download_dir_raw = _require("DOWNLOAD_DIR", problems)
+    source_base_url = _require("SOURCE_BASE_URL", problems)
     source_username = _require("SOURCE_USERNAME", problems)
     source_password = _require("SOURCE_PASSWORD", problems)  # noqa: S105
     sink_api_token = _require("SINK_API_TOKEN", problems)
@@ -79,6 +81,7 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     LOG_DIR = Path(log_dir_raw)
     DOWNLOAD_DIR = Path(download_dir_raw)
     POLL_INTERVAL_SECS = poll_interval
+    SOURCE_BASE_URL = source_base_url
     SOURCE_USERNAME = source_username
     SOURCE_PASSWORD = source_password
     SINK_API_TOKEN = sink_api_token
