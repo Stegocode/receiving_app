@@ -179,3 +179,19 @@ class SQLiteRepository:
                 return bool(row["emitted"]) if row else False
         except sqlite3.Error as exc:
             raise RepositoryError(f"was_emitted failed — {exc}") from exc
+
+    def clear_po_items(self) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM po_inventory")
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"clear_po_items failed — {exc}") from exc
+
+    def count_po_items(self) -> int:
+        try:
+            with self._connect() as conn:
+                cur = conn.execute("SELECT COUNT(*) FROM po_inventory")
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"count_po_items failed — {exc}") from exc

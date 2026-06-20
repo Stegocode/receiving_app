@@ -69,3 +69,9 @@ class FakeRepository:
     def was_emitted(self, receiving_id: str) -> bool:
         record = self._records.get(receiving_id)
         return bool(record["emitted"]) if record else False
+
+    def clear_po_items(self) -> None:
+        self._po_items.clear()
+
+    def count_po_items(self) -> int:
+        return len(self._po_items)
