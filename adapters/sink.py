@@ -93,23 +93,28 @@ class ResultSinkAdapter:
         record: ReceivingRecord,
         status_label: str,
     ) -> None:
-        column_values = json.dumps({
-            _INVENTORY_ID_COL: str(record.inventory_id),
-            _MODEL_COL: str(record.model_number),
-            _STATUS_COL: {"label": status_label},
-        })
+        column_values = json.dumps(
+            {
+                _INVENTORY_ID_COL: str(record.inventory_id),
+                _MODEL_COL: str(record.model_number),
+                _STATUS_COL: {"label": status_label},
+            }
+        )
         mutation = """
         mutation ($boardId: ID!, $groupId: String!, $itemName: String!, $columnValues: JSON!) {
           create_item(board_id: $boardId, group_id: $groupId,
                       item_name: $itemName, column_values: $columnValues) { id }
         }
         """
-        self._post(mutation, {
-            "boardId": str(self._board_id),
-            "groupId": group_id,
-            "itemName": str(record.purchase_order),
-            "columnValues": column_values,
-        })
+        self._post(
+            mutation,
+            {
+                "boardId": str(self._board_id),
+                "groupId": group_id,
+                "itemName": str(record.purchase_order),
+                "columnValues": column_values,
+            },
+        )
 
     # ── Port interface ─────────────────────────────────────────────────────────
 
@@ -124,13 +129,17 @@ class ResultSinkAdapter:
             return
 
         t0 = time.monotonic()
-        logger.info(json.dumps({
-            "event": "sink_emit",
-            "receiving_id": record.receiving_id,
-            "match_status": record.match_status,
-            "stage": "before",
-            "ms": 0,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "sink_emit",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "stage": "before",
+                    "ms": 0,
+                }
+            )
+        )
 
         if record.match_status == "received":
             self._create_item(self._received_group_id, record, "RECEIVED")
@@ -139,13 +148,17 @@ class ResultSinkAdapter:
 
         self._seen.add(record.receiving_id)
         ms = round((time.monotonic() - t0) * 1000)
-        logger.info(json.dumps({
-            "event": "sink_emit",
-            "receiving_id": record.receiving_id,
-            "match_status": record.match_status,
-            "stage": "after",
-            "ms": ms,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "sink_emit",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "stage": "after",
+                    "ms": ms,
+                }
+            )
+        )
 
     def surface_attention(self, record: ReceivingRecord) -> None:
         """Create a board item in the attention group for manual review.
@@ -156,22 +169,30 @@ class ResultSinkAdapter:
             return
 
         t0 = time.monotonic()
-        logger.info(json.dumps({
-            "event": "sink_surface_attention",
-            "receiving_id": record.receiving_id,
-            "match_status": record.match_status,
-            "stage": "before",
-            "ms": 0,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "sink_surface_attention",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "stage": "before",
+                    "ms": 0,
+                }
+            )
+        )
 
         self._create_item(self._attention_group_id, record, "NEEDS ATTENTION")
 
         self._seen.add(record.receiving_id)
         ms = round((time.monotonic() - t0) * 1000)
-        logger.info(json.dumps({
-            "event": "sink_surface_attention",
-            "receiving_id": record.receiving_id,
-            "match_status": record.match_status,
-            "stage": "after",
-            "ms": ms,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "sink_surface_attention",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "stage": "after",
+                    "ms": ms,
+                }
+            )
+        )

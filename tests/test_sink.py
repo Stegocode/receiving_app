@@ -9,7 +9,6 @@ not_measured: real board API calls, real group mutations, rate-limiting behavior
               See DEBT.md [DEBT-T09-001].
 """
 
-import json
 import logging
 from unittest.mock import MagicMock
 
@@ -213,6 +212,21 @@ def test_adapter_graphql_errors_raises_sink_error(monkeypatch):
         adapter.emit(_make_record("rid-001", "received"))
 
 
+def test_adapter_non2xx_response_raises_sink_error_with_cause(monkeypatch):
+    """raise_for_status on a non-2xx status must surface as SinkError with HTTPError chained."""
+    import requests as req_lib
+
+    adapter = _make_adapter()
+    http_error = req_lib.HTTPError("500 Server Error")
+    resp = MagicMock()
+    resp.raise_for_status.side_effect = http_error
+
+    monkeypatch.setattr("adapters.sink.requests.post", lambda *a, **kw: resp)
+    with pytest.raises(SinkError) as exc_info:
+        adapter.emit(_make_record("rid-001", "received"))
+    assert exc_info.value.__cause__ is http_error
+
+
 # ── ResultSinkAdapter — audit logging ────────────────────────────────────────
 
 
@@ -231,9 +245,7 @@ def test_adapter_emit_writes_before_and_after_audit_entries(
     assert any('"stage": "after"' in m for m in messages)
 
 
-def test_adapter_noop_produces_no_audit_entries(
-    monkeypatch, caplog: pytest.LogCaptureFixture
-):
+def test_adapter_noop_produces_no_audit_entries(monkeypatch, caplog: pytest.LogCaptureFixture):
     """Second emit with same receiving_id must produce zero log entries."""
     adapter = _make_adapter()
     monkeypatch.setattr("adapters.sink.requests.post", lambda *a, **kw: _ok_response())
@@ -248,9 +260,7 @@ def test_adapter_noop_produces_no_audit_entries(
     assert count_after_second == 2  # no new entries on no-op
 
 
-def test_adapter_audit_entry_contains_receiving_id(
-    monkeypatch, caplog: pytest.LogCaptureFixture
-):
+def test_adapter_audit_entry_contains_receiving_id(monkeypatch, caplog: pytest.LogCaptureFixture):
     adapter = _make_adapter()
     monkeypatch.setattr("adapters.sink.requests.post", lambda *a, **kw: _ok_response())
 
