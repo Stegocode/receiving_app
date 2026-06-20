@@ -109,3 +109,22 @@ def test_sync_kill() -> None:
 
     with pytest.raises(SyncKillError):
         sync_pending(repo, sink)
+
+
+def test_sync_boundary_exactly_half() -> None:
+    """BOUNDARY: 1 error of 2 → success_rate exactly 0.50 → PARTIAL, NOT KILL.
+
+    PARTIAL criterion: success rate 1/2 = 0.50 >= KILL_THRESHOLD 0.50 and < 1.0.
+    Pins that the boundary value 0.50 lands in PARTIAL, not KILL.
+    """
+    repo = FakeRepository()
+    fail_ids = {"REC-001"}
+    sink = _FailOnIdSink(fail_ids)
+    repo.save_record(_make_record("REC-000"))
+    repo.save_record(_make_record("REC-001"))
+
+    result = sync_pending(repo, sink)  # must NOT raise SyncKillError
+
+    assert result.processed == 2
+    assert result.errors == 1
+    assert result.received + result.no_match == 1
