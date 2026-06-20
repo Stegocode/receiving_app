@@ -82,3 +82,14 @@ def test_make_printer_unknown_type_raises_printer_error():
     """make_printer with an unrecognised type raises PrinterError."""
     with pytest.raises(PrinterError, match="Unknown PRINTER_TYPE"):
         make_printer("zebra_zpl")
+
+
+def test_print_label_wraps_open_failure_in_printer_error(monkeypatch):
+    """If _open raises, print_label re-raises as PrinterError."""
+
+    def _raise(_uri):
+        raise OSError("no browser")
+
+    monkeypatch.setattr(printer_mod, "_open", _raise)
+    with pytest.raises(PrinterError, match="preview label failed"):
+        PreviewPrinter().print_label(_make_record())

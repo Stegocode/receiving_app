@@ -21,10 +21,16 @@ class PreviewPrinter:
     """Renders a receiving label as HTML and opens it in the default browser."""
 
     def print_label(self, record: ReceivingRecord) -> None:
-        html = _render_label(record)
-        tmp = Path(tempfile.mktemp(suffix=".html"))
-        tmp.write_text(html, encoding="utf-8")
-        _open(tmp.as_uri())
+        try:
+            html = _render_label(record)
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".html", delete=False, encoding="utf-8"
+            ) as fh:
+                fh.write(html)
+                tmp = Path(fh.name)
+            _open(tmp.as_uri())
+        except Exception as exc:
+            raise PrinterError(f"preview label failed — {exc}") from exc
 
 
 def _render_label(record: ReceivingRecord) -> str:
