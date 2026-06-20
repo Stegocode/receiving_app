@@ -37,8 +37,22 @@ def _build_record(
     receiving_id: str,
 ) -> ReceivingRecord:
     """Build a ReceivingRecord from match result; uses empty defaults for no-match."""
+    fields = {
+        "truck": "",
+        "stop": "",
+        "sales_order": "",
+        "model_number": "",
+        "product_category": "",
+        "product_size": {"w": 0, "d": 0, "h": 0},
+        "quantity": 1,
+        "receiving_id": receiving_id,
+        "timestamp": datetime.now().isoformat(),
+        "match_status": "no_match",
+        "purchase_order": po_number,
+        "inventory_id": "",
+    }
     if matched and best_model:
-        return from_dict(
+        fields.update(
             {
                 "truck": matched.get("truck", ""),
                 "stop": matched.get("stop", ""),
@@ -47,29 +61,11 @@ def _build_record(
                 "product_category": matched.get("product_category", ""),
                 "product_size": matched.get("product_size", {"w": 0, "d": 0, "h": 0}),
                 "quantity": matched.get("quantity", 1),
-                "receiving_id": receiving_id,
-                "timestamp": datetime.now().isoformat(),
                 "match_status": "received",
-                "purchase_order": po_number,
                 "inventory_id": inventory_id,
             }
         )
-    return from_dict(
-        {
-            "truck": "",
-            "stop": "",
-            "sales_order": "",
-            "model_number": "",
-            "product_category": "",
-            "product_size": {"w": 0, "d": 0, "h": 0},
-            "quantity": 1,
-            "receiving_id": receiving_id,
-            "timestamp": datetime.now().isoformat(),
-            "match_status": "no_match",
-            "purchase_order": po_number,
-            "inventory_id": "",
-        }
-    )
+    return from_dict(fields)
 
 
 def process_scan(
