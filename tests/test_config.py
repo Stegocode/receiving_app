@@ -158,13 +158,16 @@ def test_printer_type_invalid_raises(monkeypatch):
     assert "PRINTER_TYPE" in str(exc.value)
 
 
-def test_startup_gate(monkeypatch, capsys, tmp_path):
-    """Smoke gate: main() completes without exception when all required vars are set.
+def test_startup_gate(monkeypatch, tmp_path):
+    """Smoke gate: build_app() returns a ReceivingUI when all required vars are set.
 
-    PASS: main() returns without raising, prints 'receiving_app ok'
-    KILL: main() raises any exception
-    not_measured: real DB, real adapters, real network, actual .env file on disk.
+    PASS: build_app() returns ReceivingUI without raising, no Tk window opened.
+    KILL: build_app() raises any exception.
+    SKIP: tkinter/_tkinter not installed (run `brew install python-tk@3.12` to enable).
+    not_measured: real DB, real adapters, real network, actual .env file on disk,
+                  Tk widget construction (run() is not called).
     """
+    pytest.importorskip("tkinter", reason="tkinter not available — brew install python-tk@3.12")
     env = {
         **_VALID_ENV,
         "DB_PATH": str(tmp_path / "test.db"),
@@ -179,5 +182,7 @@ def test_startup_gate(monkeypatch, capsys, tmp_path):
     spec = importlib.util.spec_from_file_location("app_main", PROJECT_ROOT / "__main__.py")
     app_main = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app_main)
-    app_main.main()
-    assert "receiving_app ok" in capsys.readouterr().out
+    from adapters.ui.scanner_ui import ReceivingUI
+
+    app = app_main.build_app()
+    assert isinstance(app, ReceivingUI)

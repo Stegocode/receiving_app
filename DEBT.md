@@ -48,6 +48,13 @@ hardcoding a screenshot directory path. Add screenshot capture when a SCREENSHOT
 config var is introduced (T-12 observability ticket).
 Trigger: T-12 adds LOG_DIR-relative screenshot path to config.
 
+[DEBT-T11b-001] 2026-06-19 — `adapters/ui/scanner_ui.py` and scanner adapters are not unit-tested in CI.
+The Tk view and scanner adapters (WedgeScanner, ManualScanner) require a display and a real Tk root
+to construct widgets. CI has no display environment and no USB scanner hardware. The testable
+scan/print orchestration logic lives in adapters/ui/controller.py, which is fully tested (4 tests,
+no Tk dependency). Validate the UI manually on macOS with a USB HID gun (wedge) and in manual mode.
+Trigger: any change to scanner_ui.py, scanner.py, or the scan state machine.
+
 [DEBT-T09-001] 2026-06-19 — `adapters/sink.py` is PORTED but live-untested.
 CI has no real API token, no live board, and no real group IDs. The entire API
 pipeline is mocked in tests. Validate the following against the live board before

@@ -67,3 +67,11 @@ class PrinterError(ReceivingAppError):
     Raised when print_label fails — check the printer connection and paper
     supply. The record is already saved and can be re-printed.
     """
+
+
+class ScannerError(ReceivingAppError):
+    """Scanner adapter failure.
+
+    Raised by make_scanner when an unknown scanner_type is requested — set
+    SCANNER_TYPE to a supported value (wedge, manual) in .env and restart.
+    """
