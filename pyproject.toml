@@ -38,7 +38,10 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "PLR0915"]
+
+[tool.ruff.lint.pylint]
+max-statements = 50
 
 [tool.mypy]
 python_version = "3.11"

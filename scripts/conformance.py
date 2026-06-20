@@ -130,31 +130,6 @@ def gate_e(files):
             fail("e", f"{f}: {len(lines)} lines (limit {_FILE_LINE_LIMIT})")
 
 
-# ── f. Function size ──────────────────────────────────────────────────────────
-_FN_LINE_LIMIT = 60
-
-
-def gate_f(files):
-    for f in files:
-        if not str(f).endswith(".py"):
-            continue
-        src = read(f)
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                start = node.lineno
-                end = node.end_lineno or start
-                length = end - start + 1
-                if length > _FN_LINE_LIMIT:
-                    fail(
-                        "f",
-                        f"{f}:{start}: '{node.name}' is {length} lines (limit {_FN_LINE_LIMIT})",
-                    )
-
-
 # ── g. Schema version ─────────────────────────────────────────────────────────
 def gate_g(files):
     text = read(Path("core") / "schema.py")
@@ -339,7 +314,6 @@ GATES = [
     gate_c,
     gate_d,
     gate_e,
-    gate_f,
     gate_g,
     gate_h,
     gate_i,
