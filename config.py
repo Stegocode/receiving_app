@@ -6,6 +6,7 @@ May import: os, pathlib, python-dotenv, core.errors.
 # Owns: all environment variable reads and validated config values.
 # Must not: contain business logic; must not be imported by core/.
 # May import: os, pathlib, python-dotenv, core.errors.
+# Blank optional vars (value.strip() == "") are treated as absent and fall back to defaults.
 
 from __future__ import annotations
 
@@ -32,6 +33,9 @@ SINK_NO_MATCH_GROUP_ID: str
 SINK_ATTENTION_GROUP_ID: str
 SCANNER_TYPE: str
 PRINTER_TYPE: str
+SOURCE_TYPE: str  # "portal" | "fake"
+SINK_TYPE: str  # "graphql" | "null"
+FAKE_SOURCE_DATA: Path
 
 
 def _require(name: str, problems: list[str]) -> str:
@@ -42,7 +46,9 @@ def _require(name: str, problems: list[str]) -> str:
 
 
 def _read_poll_interval(problems: list[str]) -> int:
-    raw = os.environ.get("POLL_INTERVAL_SECS", "10").strip()
+    raw = os.environ.get("POLL_INTERVAL_SECS", "").strip()
+    if not raw:
+        return 10
     try:
         return int(raw)
     except ValueError:
@@ -51,10 +57,17 @@ def _read_poll_interval(problems: list[str]) -> int:
 
 
 def _validate_choice(name: str, default: str, allowed: set[str], problems: list[str]) -> str:
-    val = os.environ.get(name, default).strip()
+    raw = os.environ.get(name, "").strip()
+    val = raw if raw else default
     if val not in allowed:
         problems.append(f"  {name} — got '{val}', must be one of {sorted(allowed)}.")
     return val
+
+
+def _read_optional_str(name: str, default: str) -> str:
+    """Return the env var value, or default when absent or blank."""
+    raw = os.environ.get(name, "").strip()
+    return raw if raw else default
 
 
 def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
@@ -72,6 +85,7 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     global SINK_BASE_URL, SINK_API_TOKEN, SINK_BOARD_ID
     global SINK_RECEIVED_GROUP_ID, SINK_NO_MATCH_GROUP_ID, SINK_ATTENTION_GROUP_ID
     global SCANNER_TYPE, PRINTER_TYPE
+    global SOURCE_TYPE, SINK_TYPE, FAKE_SOURCE_DATA
 
     if dotenv_path is not None:
         load_dotenv(dotenv_path=dotenv_path, override=False)
@@ -94,6 +108,9 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     poll_interval = _read_poll_interval(problems)
     scanner_type = _validate_choice("SCANNER_TYPE", "wedge", {"wedge", "manual"}, problems)
     printer_type = _validate_choice("PRINTER_TYPE", "preview", {"preview"}, problems)
+    source_type = _validate_choice("SOURCE_TYPE", "portal", {"portal", "fake"}, problems)
+    sink_type = _validate_choice("SINK_TYPE", "graphql", {"graphql", "null"}, problems)
+    fake_data_raw = _read_optional_str("FAKE_SOURCE_DATA", "test_data/pos.json")
 
     if problems:
         raise ConfigError(
@@ -115,3 +132,6 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     SINK_ATTENTION_GROUP_ID = sink_attention_group_id
     SCANNER_TYPE = scanner_type
     PRINTER_TYPE = printer_type
+    SOURCE_TYPE = source_type
+    SINK_TYPE = sink_type
+    FAKE_SOURCE_DATA = Path(fake_data_raw)

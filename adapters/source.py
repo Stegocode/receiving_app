@@ -1,24 +1,25 @@
 """
-Owns: PurchaseOrderSource implementation — scrapes the order management portal
-      for open purchase-order line items and parses the exported CSV.
+Owns: PurchaseOrderSource implementations — PortalSource (live portal scraper),
+      FakeSource (JSON fixture for dev/test mode), and make_source() factory.
 Must not: import services, adapters.db, or adapters.sink; must not read
           environment variables directly (credentials injected via constructor).
-May import: core.errors, selenium, csv, logging, pathlib, time.
+May import: core.errors, selenium, csv, json, logging, pathlib, time.
 
 Credentials are injected at construction time so this module never holds
 credential env-var names as literals — see config.py for the wiring point.
 
-PORTED but live-untested: the real scrape cannot run in CI (no browser binary,
-no credentials, no live portal). Validate end-to-end locally with credentials
-and `pip install selenium` / chromedriver in place. See DEBT.md for entries.
+PortalSource is PORTED but live-untested: the real scrape cannot run in CI.
+FakeSource reads a local JSON file (FAKE_SOURCE_DATA) for dev mode.
+See DEBT.md for live-testing entries.
 """
-# Owns: PurchaseOrderSource implementation — scrapes the order management portal.
+# Owns: PortalSource, FakeSource, make_source().
 # Must not: import services, adapters.db, adapters.sink; no direct env-var reads.
-# May import: core.errors, selenium, csv, logging, pathlib, time.
+# May import: core.errors, selenium, csv, json, logging, pathlib, time.
 
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import time
 from contextlib import suppress
@@ -288,3 +289,85 @@ class PortalSource:
             raise SourceError("order portal scrape failed") from exc
         finally:
             driver.quit()
+
+
+# ── Dev-mode fake ─────────────────────────────────────────────────────────────
+
+
+class FakeSource:
+    """PurchaseOrderSource backed by a local JSON fixture file.
+
+    Used in dev/test mode (SOURCE_TYPE=fake). The file is a JSON array of
+    line-item dicts whose shape matches PortalSource's fetch_order output.
+    Loaded lazily on the first call; cached for the lifetime of the instance.
+    """
+
+    def __init__(self, data_path: Path) -> None:
+        self._data_path = data_path
+        self._rows: list[dict] | None = None
+
+    def _load(self) -> list[dict]:
+        if self._rows is None:
+            try:
+                self._rows = json.loads(self._data_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise SourceError(
+                    f"fake source data unreadable — {self._data_path}. "
+                    "Check FAKE_SOURCE_DATA in .env."
+                ) from exc
+        return self._rows
+
+    def fetch_order(self, po_number: str) -> list[dict]:
+        t0 = time.monotonic()
+        _log.info(
+            "fake.fetch_order.start",
+            extra={"event": "fetch_order.start", "po_number": po_number},
+        )
+        rows = [r for r in self._load() if r.get("purchase_order") == po_number]
+        dur_ms = int((time.monotonic() - t0) * 1000)
+        _log.info(
+            "fake.fetch_order.complete",
+            extra={
+                "event": "fetch_order.complete",
+                "po_number": po_number,
+                "rows": len(rows),
+                "duration_ms": dur_ms,
+            },
+        )
+        return rows
+
+    def fetch_all_open_orders(self) -> list[dict]:
+        t0 = time.monotonic()
+        _log.info("fake.fetch_all.start", extra={"event": "fetch_all.start"})
+        result = list(self._load())
+        dur_ms = int((time.monotonic() - t0) * 1000)
+        _log.info(
+            "fake.fetch_all.complete",
+            extra={"event": "fetch_all.complete", "rows": len(result), "duration_ms": dur_ms},
+        )
+        return result
+
+
+# ── Factory ───────────────────────────────────────────────────────────────────
+
+
+def make_source(
+    source_type: str,
+    base_url: str,
+    username: str,
+    password: str,
+    download_dir: Path,
+    fake_data_path: Path | None = None,
+) -> PortalSource | FakeSource:
+    """Construct a PurchaseOrderSource from a type string.
+
+    Raises SourceError for unknown source_type values, before constructing anything.
+    """
+    if source_type == "portal":
+        return PortalSource(base_url, username, password, download_dir)
+    if source_type == "fake":
+        return FakeSource(fake_data_path or Path("test_data/pos.json"))
+    raise SourceError(
+        f"Unknown SOURCE_TYPE '{source_type}' — supported values: portal, fake. "
+        "Set SOURCE_TYPE in .env and restart."
+    )

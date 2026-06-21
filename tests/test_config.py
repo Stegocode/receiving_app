@@ -56,7 +56,15 @@ _VALID_ENV = {
 
 def _reload(monkeypatch, env: dict):
     """Clear all config vars from the environment, apply overrides, reload config."""
-    for var in _REQUIRED_VARS + ["POLL_INTERVAL_SECS", "SCANNER_TYPE", "PRINTER_TYPE"]:
+    _OPTIONAL_VARS = [
+        "POLL_INTERVAL_SECS",
+        "SCANNER_TYPE",
+        "PRINTER_TYPE",
+        "SOURCE_TYPE",
+        "SINK_TYPE",
+        "FAKE_SOURCE_DATA",
+    ]
+    for var in _REQUIRED_VARS + _OPTIONAL_VARS:
         monkeypatch.delenv(var, raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -156,6 +164,91 @@ def test_printer_type_invalid_raises(monkeypatch):
     with pytest.raises(ConfigError) as exc:
         cfg.validate(dotenv_path=None)
     assert "PRINTER_TYPE" in str(exc.value)
+
+
+def test_source_type_defaults_to_portal(monkeypatch):
+    """SOURCE_TYPE absent — defaults to 'portal' without error."""
+    cfg = _reload(monkeypatch, _VALID_ENV)
+    cfg.validate(dotenv_path=None)
+    assert cfg.SOURCE_TYPE == "portal"
+
+
+def test_source_type_blank_falls_back_to_portal(monkeypatch):
+    """SOURCE_TYPE='' (blank) — treated as absent, defaults to 'portal'."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "SOURCE_TYPE": ""})
+    cfg.validate(dotenv_path=None)
+    assert cfg.SOURCE_TYPE == "portal"
+
+
+def test_source_type_invalid_raises(monkeypatch):
+    """Invalid SOURCE_TYPE — ConfigError names the var."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "SOURCE_TYPE": "scraper"})
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "SOURCE_TYPE" in str(exc.value)
+
+
+def test_sink_type_defaults_to_graphql(monkeypatch):
+    """SINK_TYPE absent — defaults to 'graphql' without error."""
+    cfg = _reload(monkeypatch, _VALID_ENV)
+    cfg.validate(dotenv_path=None)
+    assert cfg.SINK_TYPE == "graphql"
+
+
+def test_sink_type_blank_falls_back_to_graphql(monkeypatch):
+    """SINK_TYPE='' (blank) — treated as absent, defaults to 'graphql'."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "SINK_TYPE": ""})
+    cfg.validate(dotenv_path=None)
+    assert cfg.SINK_TYPE == "graphql"
+
+
+def test_sink_type_invalid_raises(monkeypatch):
+    """Invalid SINK_TYPE — ConfigError names the var."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "SINK_TYPE": "rest"})
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "SINK_TYPE" in str(exc.value)
+
+
+def test_poll_interval_blank_falls_back_to_default(monkeypatch):
+    """POLL_INTERVAL_SECS='' (blank) — treated as absent, defaults to 10."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "POLL_INTERVAL_SECS": ""})
+    cfg.validate(dotenv_path=None)
+    assert cfg.POLL_INTERVAL_SECS == 10
+
+
+def test_scanner_type_blank_falls_back_to_default(monkeypatch):
+    """SCANNER_TYPE='' (blank) — treated as absent, defaults to 'wedge'."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "SCANNER_TYPE": ""})
+    cfg.validate(dotenv_path=None)
+    assert cfg.SCANNER_TYPE == "wedge"
+
+
+def test_build_app_creates_missing_dirs(monkeypatch, tmp_path):
+    """build_app() creates DB_PATH.parent, LOG_DIR, and DOWNLOAD_DIR on first run.
+
+    PASS: all three directories exist after build_app() completes.
+    KILL: build_app() raises, or any directory is absent.
+    SKIP: tkinter/_tkinter not installed (run `brew install python-tk@3.12` to enable).
+    not_measured: Tk widget construction (run() is not called).
+    """
+    pytest.importorskip("tkinter", reason="tkinter not available — brew install python-tk@3.12")
+    env = {
+        **_VALID_ENV,
+        "DB_PATH": str(tmp_path / "db" / "app.db"),
+        "LOG_DIR": str(tmp_path / "logs"),
+        "DOWNLOAD_DIR": str(tmp_path / "downloads"),
+    }
+    cfg = _reload(monkeypatch, env)
+    real_validate = cfg.validate
+    monkeypatch.setattr(cfg, "validate", lambda: real_validate(dotenv_path=None))
+    spec = importlib.util.spec_from_file_location("app_main", PROJECT_ROOT / "__main__.py")
+    app_main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app_main)
+    app_main.build_app()
+    assert (tmp_path / "db").exists()
+    assert (tmp_path / "logs").exists()
+    assert (tmp_path / "downloads").exists()
 
 
 def test_startup_gate(monkeypatch, tmp_path):

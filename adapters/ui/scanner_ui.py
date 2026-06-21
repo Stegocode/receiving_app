@@ -73,7 +73,7 @@ class ReceivingUI:
 
         self._build_ui()
 
-        scanner = make_scanner(self._scanner_type, parent=root)
+        scanner = make_scanner(self._scanner_type, parent=self._right)
         scanner.start(self._on_scan)
 
         if hasattr(scanner, "focus_entry"):
@@ -199,7 +199,7 @@ class ReceivingUI:
             font=F_STATE,
             bg=C_IDLE,
             fg=C_WHITE,
-            wraplength=920,
+            wraplength=700,
             justify="center",
         )
         self._state_lbl.pack()
@@ -209,7 +209,7 @@ class ReceivingUI:
             font=F_SECONDARY,
             bg=C_IDLE,
             fg=C_DIM,
-            wraplength=920,
+            wraplength=700,
             justify="center",
         )
         self._sec_lbl.pack(pady=(14, 0))

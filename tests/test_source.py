@@ -1,8 +1,9 @@
 """
-Owns: tests for PortalSource adapter and FakePurchaseOrderSource fake.
+Owns: tests for PortalSource adapter, FakePurchaseOrderSource test fake,
+      and FakeSource dev adapter.
 Must not: launch a real browser, open a network connection, or import adapters.db.
-May import: pytest, unittest.mock, contextlib, adapters.source, tests.fakes.fake_source,
-            core.ports, core.errors.
+May import: pytest, unittest.mock, contextlib, json, adapters.source,
+            tests.fakes.fake_source, core.ports, core.errors.
 
 not_measured: end-to-end scrape against the live portal; CSV column-name drift;
               login-flow changes; filter-checkbox ID changes; download filename
@@ -10,6 +11,7 @@ not_measured: end-to-end scrape against the live portal; CSV column-name drift;
               See DEBT.md [DEBT-T08-*].
 """
 
+import json
 import logging
 from contextlib import ExitStack
 from pathlib import Path
@@ -255,3 +257,91 @@ def test_parse_csv_returns_correct_field_names(tmp_path: Path):
     assert rows[0]["brand"] == "Brand9"
     assert rows[0]["vendor"] is None
     assert rows[0]["tags"] == "t1"
+
+
+# ── FakeSource (dev-mode adapter) tests ───────────────────────────────────────
+
+_FAKE_ROWS = [
+    {
+        "inventory_id": "INVT-001",
+        "purchase_order": "10001",
+        "model_number": "NT-2000A",
+        "description": "Executive Desk",
+        "brand": "Novatech",
+        "vendor": None,
+        "tags": None,
+        "truck": "TRK-01",
+        "stop": "01",
+        "sales_order": "SO-50001",
+        "product_category": "Desks",
+        "product_size": {"w": 60, "d": 30, "h": 30},
+        "quantity": 1,
+    },
+    {
+        "inventory_id": "INVT-002",
+        "purchase_order": "10002",
+        "model_number": "CF-450",
+        "description": "Guest Chair",
+        "brand": "Crestfield",
+        "vendor": None,
+        "tags": None,
+        "truck": "TRK-02",
+        "stop": "01",
+        "sales_order": "SO-50002",
+        "product_category": "Seating",
+        "product_size": {"w": 24, "d": 22, "h": 38},
+        "quantity": 4,
+    },
+]
+
+
+def test_fake_source_fetch_order_returns_matching_rows(tmp_path: Path):
+    """FakeSource.fetch_order returns rows for the requested PO only."""
+    from adapters.source import FakeSource
+
+    fixture = tmp_path / "pos.json"
+    fixture.write_text(json.dumps(_FAKE_ROWS), encoding="utf-8")
+    src = FakeSource(fixture)
+    rows = src.fetch_order("10001")
+    assert len(rows) == 1
+    assert rows[0]["inventory_id"] == "INVT-001"
+    assert rows[0]["model_number"] == "NT-2000A"
+
+
+def test_fake_source_field_mapping_includes_full_line_item_set(tmp_path: Path):
+    """FakeSource rows include the full line-item field set consumed by process_scan."""
+    from adapters.source import FakeSource
+
+    fixture = tmp_path / "pos.json"
+    fixture.write_text(json.dumps(_FAKE_ROWS), encoding="utf-8")
+    src = FakeSource(fixture)
+    rows = src.fetch_order("10001")
+    row = rows[0]
+    assert row["truck"] == "TRK-01"
+    assert row["sales_order"] == "SO-50001"
+    assert row["product_category"] == "Desks"
+    assert row["product_size"] == {"w": 60, "d": 30, "h": 30}
+    assert row["quantity"] == 1
+
+
+def test_fake_source_fetch_all_returns_all_rows(tmp_path: Path):
+    """FakeSource.fetch_all_open_orders returns every row across all POs."""
+    from adapters.source import FakeSource
+
+    fixture = tmp_path / "pos.json"
+    fixture.write_text(json.dumps(_FAKE_ROWS), encoding="utf-8")
+    src = FakeSource(fixture)
+    rows = src.fetch_all_open_orders()
+    assert len(rows) == 2
+    ids = {r["inventory_id"] for r in rows}
+    assert ids == {"INVT-001", "INVT-002"}
+
+
+def test_fake_source_missing_file_raises_source_error(tmp_path: Path):
+    """FakeSource raises SourceError (with cause) when the JSON file is absent."""
+    from adapters.source import FakeSource
+
+    src = FakeSource(tmp_path / "nonexistent.json")
+    with pytest.raises(SourceError) as exc_info:
+        src.fetch_order("10001")
+    assert exc_info.value.__cause__ is not None

@@ -1,0 +1,47 @@
+[
+  {
+    "inventory_id": "INVT-001",
+    "purchase_order": "10001",
+    "model_number": "NT-2000A",
+    "description": "Executive Desk",
+    "brand": "Novatech",
+    "vendor": null,
+    "tags": null,
+    "truck": "TRK-01",
+    "stop": "01",
+    "sales_order": "SO-50001",
+    "product_category": "Desks",
+    "product_size": {"w": 60, "d": 30, "h": 30},
+    "quantity": 1
+  },
+  {
+    "inventory_id": "INVT-002",
+    "purchase_order": "10001",
+    "model_number": "CF-450",
+    "description": "Guest Chair",
+    "brand": "Crestfield",
+    "vendor": null,
+    "tags": "ergonomic",
+    "truck": "TRK-01",
+    "stop": "02",
+    "sales_order": "SO-50001",
+    "product_category": "Seating",
+    "product_size": {"w": 24, "d": 22, "h": 38},
+    "quantity": 4
+  },
+  {
+    "inventory_id": "INVT-003",
+    "purchase_order": "10002",
+    "model_number": "VT-700X",
+    "description": "Storage Cabinet",
+    "brand": "Vantara",
+    "vendor": null,
+    "tags": null,
+    "truck": "TRK-02",
+    "stop": "01",
+    "sales_order": "SO-50002",
+    "product_category": "Storage",
+    "product_size": {"w": 36, "d": 18, "h": 72},
+    "quantity": 2
+  }
+]

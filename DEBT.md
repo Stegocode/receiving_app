@@ -55,6 +55,12 @@ scan/print orchestration logic lives in adapters/ui/controller.py, which is full
 no Tk dependency). Validate the UI manually on macOS with a USB HID gun (wedge) and in manual mode.
 Trigger: any change to scanner_ui.py, scanner.py, or the scan state machine.
 
+[DEBT-T11c-001] 2026-06-20 — dev mode (SOURCE_TYPE=fake, SINK_TYPE=null) is unit-tested but not end-to-end validated.
+FakeSource and NullSink are individually tested (test_source.py, test_sink.py, test_factories.py).
+The full running-app flow with SOURCE_TYPE=fake + SINK_TYPE=null has not been exercised
+with a real UI session. Validate manually before relying on dev mode for onboarding or training.
+Trigger: before dev mode is used as the default training environment.
+
 [DEBT-T09-001] 2026-06-19 — `adapters/sink.py` is PORTED but live-untested.
 CI has no real API token, no live board, and no real group IDs. The entire API
 pipeline is mocked in tests. Validate the following against the live board before

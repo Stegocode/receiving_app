@@ -1,5 +1,5 @@
 """
-Owns: tests for ResultSinkAdapter and FakeResultSink.
+Owns: tests for ResultSinkAdapter, NullSink, and FakeResultSink.
 Must not: make real API calls or import adapters.db or adapters.source.
 May import: pytest, unittest.mock, adapters.sink, tests.fakes.fake_sink,
             core.ports, core.errors, core.schema.
@@ -269,3 +269,39 @@ def test_adapter_audit_entry_contains_receiving_id(monkeypatch, caplog: pytest.L
 
     combined = " ".join(r.getMessage() for r in caplog.records)
     assert "rid-unique-99" in combined
+
+
+# ── NullSink tests ────────────────────────────────────────────────────────────
+
+
+def test_null_sink_emit_logs_without_raising(caplog: pytest.LogCaptureFixture):
+    """NullSink.emit logs the event and does not raise."""
+    from adapters.sink import NullSink
+
+    sink = NullSink()
+    with caplog.at_level(logging.INFO, logger="adapters.sink"):
+        sink.emit(_make_record("rid-null-1", "received"))
+    assert any("null_sink_emit" in r.getMessage() for r in caplog.records)
+
+
+def test_null_sink_emit_is_idempotent(caplog: pytest.LogCaptureFixture):
+    """NullSink.emit is a no-op on a duplicate receiving_id."""
+    from adapters.sink import NullSink
+
+    sink = NullSink()
+    with caplog.at_level(logging.INFO, logger="adapters.sink"):
+        sink.emit(_make_record("rid-null-2", "received"))
+        sink.emit(_make_record("rid-null-2", "received"))
+    emits = [r for r in caplog.records if "null_sink_emit" in r.getMessage()]
+    assert len(emits) == 1
+
+
+def test_null_sink_surface_attention_is_idempotent():
+    """NullSink.surface_attention is a no-op on a duplicate receiving_id."""
+    from adapters.sink import NullSink
+
+    sink = NullSink()
+    sink.surface_attention(_make_record("rid-null-3", "needs_attention"))
+    sink.surface_attention(_make_record("rid-null-3", "needs_attention"))
+    assert "rid-null-3" in sink._seen
+    assert len(sink._seen) == 1

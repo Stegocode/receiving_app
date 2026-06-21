@@ -1,13 +1,14 @@
 """
-Owns: result sink adapter — posts receiving outcomes to the project management board.
+Owns: ResultSink implementations — ResultSinkAdapter (GraphQL API), NullSink
+      (dev/log mode), and make_sink() factory.
 Must not: import core.ports directly — implement the ResultSink protocol concretely.
 May import: core.schema, core.errors, requests, logging, json, time.
 
 Crash-safety invariant: a crash at any step in process_scan, on retry, neither
 double-emits nor loses the record. The caller guards with was_emitted before calling
-emit; this adapter deduplicates on receiving_id via an in-process _seen set.
+emit; both adapters deduplicate on receiving_id via an in-process _seen set.
 """
-# Owns: result sink adapter.
+# Owns: ResultSinkAdapter, NullSink, make_sink().
 # Must not: import core.ports directly; must not read environment variables directly.
 # May import: core.schema, core.errors, requests, logging, json, time.
 
@@ -196,3 +197,83 @@ class ResultSinkAdapter:
                 }
             )
         )
+
+
+# ── Dev-mode null sink ────────────────────────────────────────────────────────
+
+
+class NullSink:
+    """ResultSink that logs each call instead of POSTing to any API.
+
+    Identical dedup behaviour to ResultSinkAdapter: idempotent on receiving_id
+    via an in-process _seen set. Used in dev mode (SINK_TYPE=null).
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[str] = set()
+
+    def emit(self, record: ReceivingRecord) -> None:
+        """Log the emit event; no-op if receiving_id already seen."""
+        if record.receiving_id in self._seen:
+            return
+        logger.info(
+            json.dumps(
+                {
+                    "event": "null_sink_emit",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "purchase_order": record.purchase_order,
+                    "model_number": record.model_number,
+                }
+            )
+        )
+        self._seen.add(record.receiving_id)
+
+    def surface_attention(self, record: ReceivingRecord) -> None:
+        """Log the attention event; no-op if receiving_id already seen."""
+        if record.receiving_id in self._seen:
+            return
+        logger.info(
+            json.dumps(
+                {
+                    "event": "null_sink_surface_attention",
+                    "receiving_id": record.receiving_id,
+                    "match_status": record.match_status,
+                    "purchase_order": record.purchase_order,
+                }
+            )
+        )
+        self._seen.add(record.receiving_id)
+
+
+# ── Factory ───────────────────────────────────────────────────────────────────
+
+
+def make_sink(
+    sink_type: str,
+    base_url: str = "",
+    api_token: str = "",
+    board_id: str = "",
+    received_group_id: str = "",
+    no_match_group_id: str = "",
+    attention_group_id: str = "",
+) -> ResultSinkAdapter | NullSink:
+    """Construct a ResultSink from a type string.
+
+    Raises SinkError for unknown sink_type values, before constructing anything.
+    """
+    if sink_type == "null":
+        return NullSink()
+    if sink_type == "graphql":
+        return ResultSinkAdapter(
+            base_url,
+            api_token,
+            board_id,
+            received_group_id,
+            no_match_group_id,
+            attention_group_id,
+        )
+    raise SinkError(
+        f"Unknown SINK_TYPE '{sink_type}' — supported values: graphql, null. "
+        "Set SINK_TYPE in .env and restart."
+    )
