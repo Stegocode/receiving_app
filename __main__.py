@@ -38,6 +38,9 @@ def build_app() -> ReceivingUI:
         received_group_id=config.SINK_RECEIVED_GROUP_ID,
         no_match_group_id=config.SINK_NO_MATCH_GROUP_ID,
         attention_group_id=config.SINK_ATTENTION_GROUP_ID,
+        inventory_id_col=config.SINK_INVENTORY_ID_COL,
+        model_col=config.SINK_MODEL_COL,
+        status_col=config.SINK_STATUS_COL,
     )
     source = make_source(
         config.SOURCE_TYPE,

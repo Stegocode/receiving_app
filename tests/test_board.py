@@ -261,11 +261,19 @@ def test_adapter_non2xx_response_raises_board_error_with_cause(monkeypatch):
 
 
 def test_adapter_graphql_errors_payload_raises_board_error(monkeypatch):
-    """A response body containing an 'errors' key raises BoardError."""
+    """A response body containing an 'errors' key raises BoardError.
+
+    The payload includes a valid 'data' structure so the raise is caused by the
+    errors-check, not a KeyError from a missing 'data' key.
+    """
     adapter = _make_adapter()
+    payload = {
+        "data": {"boards": [{"groups": [{"items_page": {"cursor": None, "items": []}}]}]},
+        "errors": [{"message": "invalid token"}],
+    }
     monkeypatch.setattr(
         "adapters.board.requests.post",
-        lambda *a, **kw: _mock_response({"errors": [{"message": "invalid token"}]}),
+        lambda *a, **kw: _mock_response(payload),
     )
     with pytest.raises(BoardError):
         adapter.poll_ready()

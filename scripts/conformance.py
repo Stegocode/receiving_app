@@ -43,6 +43,12 @@ _ALWAYS_BANNED = [
     "Mon" + "day",  # vendor name — use adapters/sink.py
 ]
 
+# Real proprietary board ID fragments — must never appear in committed files.
+_BANNED_REAL_IDS = [
+    "mm" + "3y",  # board column ID hash fragment
+    "184160" + "41666",  # numeric board ID
+]
+
 
 def banned_name_hit(name: str, text: str, path: str) -> bool:
     """Return True if *name* appears (case-insensitively) in *text* or *path*."""
@@ -57,6 +63,9 @@ def gate_a(files):
         for name in _ALWAYS_BANNED:
             if banned_name_hit(name, text, norm):
                 fail("a", f"{norm}: contains banned name '{name}'")
+        for fragment in _BANNED_REAL_IDS:
+            if fragment in text:
+                fail("a", f"{norm}: contains real board ID fragment '{fragment}'")
 
 
 # ── b. Absolute paths ─────────────────────────────────────────────────────────

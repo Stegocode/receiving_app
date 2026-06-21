@@ -61,7 +61,7 @@ The full running-app flow with SOURCE_TYPE=fake + SINK_TYPE=null has not been ex
 with a real UI session. Validate manually before relying on dev mode for onboarding or training.
 Trigger: before dev mode is used as the default training environment.
 
-[DEBT-T12-001] 2026-06-21 — `adapters/board.py` (BoardApiAdapter) is PORTED but live-untested.
+[DEBT-T12-001] 2026-06-21 — REMEDIATED 2026-06-21 (sink.py column IDs injected; real-ID gate added; errors test hardened). `adapters/board.py` (BoardApiAdapter) is PORTED but live-untested.
 CI has no real API token, no live board, and no real group or column IDs. The entire API
 pipeline is mocked in tests. Validate the following against the live board before
 declaring T-12 DONE:

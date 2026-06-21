@@ -6,7 +6,7 @@ May import: pytest, conformance.banned_name_hit.
 not_measured: full gate_a integration against a real git tree.
 """
 
-from conformance import banned_name_hit
+from conformance import _BANNED_REAL_IDS, banned_name_hit
 
 # ── exact-case hits ───────────────────────────────────────────────────────────
 
@@ -51,3 +51,27 @@ def test_clean_file_not_flagged():
 
 def test_clean_path_not_flagged():
     assert not banned_name_hit("Home" + "Source", "purchase order source", "adapters/source.py")
+
+
+# ── real board ID fragment hits ───────────────────────────────────────────────
+
+
+def test_column_id_fragment_is_in_banned_list():
+    assert ("mm" + "3y") in _BANNED_REAL_IDS
+
+
+def test_board_numeric_id_fragment_is_in_banned_list():
+    assert ("184160" + "41666") in _BANNED_REAL_IDS
+
+
+def test_column_id_fragment_caught_in_content():
+    """A column ID containing the hash fragment is caught in file content."""
+    assert "col" + "_" + "mm" + "3y" + "abc" in ("col_" + "mm" + "3y" + "abc")
+    fragment = "mm" + "3y"
+    assert fragment in ("color_" + "mm" + "3y" + "se8h")
+
+
+def test_board_numeric_id_fragment_caught_in_content():
+    """The numeric board ID is caught when present in file content."""
+    fragment = "184160" + "41666"
+    assert fragment in ("board id = " + "184160" + "41666")

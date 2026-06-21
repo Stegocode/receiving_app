@@ -23,11 +23,6 @@ import requests
 from core.errors import SinkError
 from core.schema import ReceivingRecord
 
-# Column IDs on the receiving board — structural constants from the board schema.
-_STATUS_COL = "color_mm3yse8h"
-_INVENTORY_ID_COL = "text_mm3y7rsn"
-_MODEL_COL = "text_mm3yjwhf"
-
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +41,9 @@ class ResultSinkAdapter:
         received_group_id: str,
         no_match_group_id: str,
         attention_group_id: str,
+        inventory_id_col: str,
+        model_col: str,
+        status_col: str,
     ) -> None:
         self._base_url = base_url
         self._token = api_token
@@ -53,6 +51,9 @@ class ResultSinkAdapter:
         self._received_group_id = received_group_id
         self._no_match_group_id = no_match_group_id
         self._attention_group_id = attention_group_id
+        self._inventory_id_col = inventory_id_col
+        self._model_col = model_col
+        self._status_col = status_col
         self._seen: set[str] = set()
 
     # ── Internal helpers ───────────────────────────────────────────────────────
@@ -96,9 +97,9 @@ class ResultSinkAdapter:
     ) -> None:
         column_values = json.dumps(
             {
-                _INVENTORY_ID_COL: str(record.inventory_id),
-                _MODEL_COL: str(record.model_number),
-                _STATUS_COL: {"label": status_label},
+                self._inventory_id_col: str(record.inventory_id),
+                self._model_col: str(record.model_number),
+                self._status_col: {"label": status_label},
             }
         )
         mutation = """
@@ -257,6 +258,9 @@ def make_sink(
     received_group_id: str = "",
     no_match_group_id: str = "",
     attention_group_id: str = "",
+    inventory_id_col: str = "",
+    model_col: str = "",
+    status_col: str = "",
 ) -> ResultSinkAdapter | NullSink:
     """Construct a ResultSink from a type string.
 
@@ -272,6 +276,9 @@ def make_sink(
             received_group_id,
             no_match_group_id,
             attention_group_id,
+            inventory_id_col,
+            model_col,
+            status_col,
         )
     raise SinkError(
         f"Unknown SINK_TYPE '{sink_type}' — supported values: graphql, null. "

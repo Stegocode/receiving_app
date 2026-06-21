@@ -48,6 +48,9 @@ def _make_adapter() -> ResultSinkAdapter:
         received_group_id="grp_recv",
         no_match_group_id="grp_nm",
         attention_group_id="grp_att",
+        inventory_id_col="col_inv",
+        model_col="col_model",
+        status_col="col_status",
     )
 
 
