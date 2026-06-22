@@ -1,15 +1,16 @@
 """
 Owns: SQLite implementation of the Repository port.
 Must not: import services or other adapters.
-May import: core.ports, core.schema, core.errors, sqlite3, config, json, pathlib.
+May import: core.ports, core.schema, core.errors, sqlite3, config, json, logging, pathlib.
 """
 # Owns: SQLite implementation of the Repository port.
 # Must not: import services or other adapters.
-# May import: core.ports, core.schema, core.errors, sqlite3, config, json, pathlib.
+# May import: core.ports, core.schema, core.errors, sqlite3, config, json, logging, pathlib.
 
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ import config
 from core.errors import RepositoryError
 from core.schema import ReceivingRecord
 
+_log = logging.getLogger(__name__)
 _SCHEMA_PATH = Path(__file__).parent.parent / "schema" / "0001_init.sql"
 
 
@@ -85,6 +87,7 @@ class SQLiteRepository:
                             item.get("created_at", _now_iso()),
                         ),
                     )
+            _log.info("db_upsert count=%d", len(items))
         except sqlite3.Error as exc:
             raise RepositoryError(f"upsert_items failed — {exc}") from exc
 
@@ -136,6 +139,7 @@ class SQLiteRepository:
                         now,  # updated_at in DO UPDATE
                     ),
                 )
+            _log.info("db_save_record receiving_id=%s", record.receiving_id)
         except sqlite3.Error as exc:
             raise RepositoryError(f"save_record failed — {exc}") from exc
 

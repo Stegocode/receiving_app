@@ -167,7 +167,7 @@ class BoardApiAdapter:
             except (KeyError, TypeError) as exc:
                 raise BoardError(f"Board poll_ready pagination failed: {exc!r}") from exc
 
-        logger.debug(json.dumps({"event": "board_poll_ready", "count": len(items)}))
+        logger.info(json.dumps({"event": "board_poll_ready", "count": len(items)}))
         return [self._parse_item(item) for item in items]
 
     def mark_received(self, item_id: str) -> None:
@@ -186,12 +186,12 @@ class BoardApiAdapter:
                 "value": json.dumps({"label": "RECEIVED"}),
             },
         )
-        logger.debug(json.dumps({"event": "board_mark_received", "item_id": item_id}))
+        logger.info(json.dumps({"event": "board_mark_received", "item_id": item_id}))
 
     def mark_no_match(self, item_id: str) -> None:
         """Move item to NO MATCH group. Raises BoardError on failure."""
         self._post(_MUTATION_MOVE, {"itemId": item_id, "groupId": self._no_match_group_id})
-        logger.debug(json.dumps({"event": "board_mark_no_match", "item_id": item_id}))
+        logger.info(json.dumps({"event": "board_mark_no_match", "item_id": item_id}))
 
 
 # ── In-memory fake board ──────────────────────────────────────────────────────

@@ -2,8 +2,8 @@
 Owns: application entry point and composition root — wires all adapters together.
 Must not: contain business logic; must not read environment variables directly;
           must not import tkinter.
-May import: config, adapters.db, adapters.printer, adapters.sink, adapters.source,
-            adapters.ui.scanner_ui, services.receive, services.populate.
+May import: config, core.logging_setup, adapters.db, adapters.printer, adapters.sink,
+            adapters.source, adapters.ui.scanner_ui, services.receive, services.populate.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from adapters.printer import make_printer
 from adapters.sink import make_sink
 from adapters.source import make_source
 from adapters.ui.scanner_ui import ReceivingUI
+from core.logging_setup import setup_logging
 from services.populate import populate_po
 from services.receive import process_scan
 
@@ -28,6 +29,7 @@ def build_app() -> ReceivingUI:
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     config.DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    setup_logging(config.LOG_DIR)
 
     repo = SQLiteRepository()
     sink = make_sink(

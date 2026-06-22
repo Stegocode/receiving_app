@@ -122,3 +122,28 @@ declaring T-09 DONE:
     and items land in the expected groups.
 Trigger: before T-09 is considered production-ready; run with real credentials in a
 local .env pointing at the live board.
+
+[DEBT-T15-001] 2026-06-21 — Plain-text logging; no machine-parseable output yet.
+Logs are written as human-readable text to a rotating file (receiving_app.log). If a
+downstream WMS, monitoring system, or log aggregator requires structured output, switch
+setup_logging to a JSON formatter and consider dated sub-folders under LOG_DIR.
+Trigger: integration with a log aggregator or WMS that needs parseable log lines.
+
+[DEBT-T15-002] 2026-06-21 — No retry budget in portal adapters.
+adapters/source.py (PortalSource) and adapters/receiver.py (PortalReceiver) abort on
+transient failures with no retry. A single network hiccup raises SourceError / ExecutorError
+immediately. Future: configurable retry count with exponential backoff, injected at
+construction time so unit tests remain fast (no sleep).
+Trigger: first live run reveals transient portal failures that a retry would have recovered.
+
+[DEBT-T15-003] 2026-06-21 — Single Repository implementation (SQLite only).
+SQLiteRepository is the only implementation of the Repository port. For production scale or
+multi-writer access, a Postgres adapter behind the same port is needed.
+Trigger: dataset outgrows SQLite, multi-writer access is required, or production moves to a
+managed database (e.g. Neon Postgres).
+
+[DEBT-T15-004] 2026-06-21 — Mixed log-call styles across adapters.
+Three styles coexist: extra={} (receiver.py), %-format strings (receive_sync.py), and
+logger.info(json.dumps({...})) (sink.py, board.py). All are functionally correct and visible
+at INFO. Standardize on one structured style (extra={} or json.dumps) in a future cleanup.
+Trigger: adding a log aggregator or formatter that expects one call convention.
