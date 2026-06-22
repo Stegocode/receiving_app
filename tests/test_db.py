@@ -1,14 +1,17 @@
 """
 Owns: integration tests for the SQLite Repository adapter (adapters.db).
 Must not: import adapters.sink or adapters.source.
-May import: pytest, adapters.db, core.schema, core.errors.
+May import: pytest, adapters.db, core.schema, core.errors, sqlite3, pathlib.
 
 not_measured: Postgres behaviour, concurrent writes, very large datasets,
-              WAL-mode crash recovery, schema migration chains beyond v1.
+              WAL-mode crash recovery.
 """
+
+import sqlite3
 
 import pytest
 
+import adapters.db
 from adapters.db import SQLiteRepository
 from core.errors import RepositoryError
 from core.schema import ReceivingRecord
@@ -49,6 +52,86 @@ def _item(**kwargs) -> dict:
     }
     defaults.update(kwargs)
     return defaults
+
+
+# ── Migration runner ──────────────────────────────────────────────────────────
+
+
+def test_migration_runner_fresh_db_sets_user_version_1(tmp_path):
+    db_path = tmp_path / "test.db"
+    SQLiteRepository(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == 1
+
+
+def test_migration_runner_idempotent(tmp_path):
+    db_path = tmp_path / "test.db"
+    SQLiteRepository(db_path=db_path)
+    SQLiteRepository(db_path=db_path)  # second construction — no-op
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == 1
+
+
+def test_migration_runner_applies_0002_fixture(tmp_path, monkeypatch):
+    """With a temp schema dir containing 0001 + 0002, both are applied in order."""
+    schema_dir = tmp_path / "schema"
+    schema_dir.mkdir()
+    (schema_dir / "0001_init.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT);\n",
+        encoding="utf-8",
+    )
+    (schema_dir / "0002_add_flag.sql").write_text(
+        "ALTER TABLE notes ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(adapters.db, "_SCHEMA_DIR", schema_dir)
+
+    db_path = tmp_path / "test.db"
+    SQLiteRepository(db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
+    assert version == 2
+    assert "flagged" in cols
+
+
+def test_migration_runner_existing_v1_applies_0002_without_touching_rows(tmp_path, monkeypatch):
+    """DB at version 1 with rows — adding 0002 applies the migration without losing rows."""
+    schema_dir = tmp_path / "schema"
+    schema_dir.mkdir()
+    (schema_dir / "0001_init.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT);\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(adapters.db, "_SCHEMA_DIR", schema_dir)
+
+    db_path = tmp_path / "test.db"
+    SQLiteRepository(db_path=db_path)  # applies 0001, user_version=1
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO notes (id, body) VALUES ('n1', 'hello')")
+
+    # Add 0002 after the initial setup
+    (schema_dir / "0002_add_flag.sql").write_text(
+        "ALTER TABLE notes ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;\n",
+        encoding="utf-8",
+    )
+    SQLiteRepository(db_path=db_path)  # should apply only 0002
+
+    with sqlite3.connect(db_path) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        rows = conn.execute("SELECT id, body, flagged FROM notes").fetchall()
+    assert version == 2
+    assert len(rows) == 1
+    assert rows[0][0] == "n1"
+    assert rows[0][1] == "hello"
+    assert rows[0][2] == 0  # new column default; existing row untouched
+
+
+# ── Existing schema / CRUD tests ──────────────────────────────────────────────
 
 
 def test_ensure_schema_idempotent(tmp_path):

@@ -28,9 +28,10 @@ dev = [
 
 [project.scripts]
 receiving-app = "__main__:main"
+receiving-refresh = "refresh_runner:main"
 
 [tool.setuptools]
-py-modules = ["config", "__main__"]
+py-modules = ["config", "__main__", "refresh_runner"]
 
 [tool.setuptools.packages.find]
 include = ["core*", "services*", "adapters*"]

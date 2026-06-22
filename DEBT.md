@@ -142,6 +142,19 @@ multi-writer access, a Postgres adapter behind the same port is needed.
 Trigger: dataset outgrows SQLite, multi-writer access is required, or production moves to a
 managed database (e.g. Neon Postgres).
 
+[DEBT-T16.1-002] 2026-06-22 — SQLiteRepository._connect() connections never explicitly closed; ResourceWarnings in Python 3.13.
+The with self._connect() as conn: pattern throughout SQLiteRepository commits/rolls back on __exit__ but never calls
+conn.close(). Python 3.13's GC issues ResourceWarnings for unclosed sqlite3.Connection objects. Functional correctness
+is unaffected (SQLite auto-closes at GC). Fix: add explicit conn.close() after each with block or adopt a single
+long-lived connection per method. Deferred as pre-existing pattern; _ensure_schema was fixed in T-16.1 (uses try/finally).
+Trigger: Python 3.13+ upgrade or CI run with -W error::ResourceWarning.
+
+[DEBT-T16.1-001] 2026-06-22 — replace_po_items atomicity is connection-level, not WAL-safe under concurrent writers.
+SQLiteRepository.replace_po_items uses a single sqlite3.connect() context manager (DELETE + bulk INSERT in one implicit transaction),
+which is atomic for the single-writer case. Under concurrent writers or WAL mode, a second writer between connections would see an
+empty window during the DELETE phase. Acceptable for single-writer SQLite (DEBT-T15-003 tracks the Postgres migration).
+Trigger: multi-writer access or WAL-mode deployment.
+
 [DEBT-T15-004] 2026-06-21 — Mixed log-call styles across adapters (cosmetic only).
 Three styles coexist: extra={} (receiver.py), %-format strings (receive_sync.py), and
 logger.info(json.dumps({...})) (sink.py, board.py). All styles are now fully rendered in the

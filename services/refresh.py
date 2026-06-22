@@ -14,22 +14,34 @@ logger = logging.getLogger(__name__)
 
 
 def refresh_all(source: PurchaseOrderSource, repository: Repository, confirmed: bool) -> None:
-    """Wipe po_inventory and reload from source.
+    """Fetch-then-replace po_inventory from source.
 
-    confirmed=False is a no-op; the caller (entry point) handles the prompt.
-    Logs row count before and after the wipe so the operator can verify the rebuild.
+    Safety contract:
+      - confirmed=False  → no-op; caller (entry point) owns the prompt.
+      - fetch raises     → exception propagates; DB is never touched.
+      - fetch returns [] → safety-stop logged; DB is never touched.
+      - non-empty fetch  → replace_po_items() wipes and reloads atomically.
+
+    PASS criterion: after a successful call, count_po_items() == len(fetched rows).
+    KILL criterion: a fetch failure must never leave the catalog empty.
+    not_measured: real portal network calls; concurrent writers; very large catalogs.
     """
     if not confirmed:
         logger.info("refresh_aborted reason=not_confirmed")
         return
 
+    items = source.fetch_all_open_orders()
+
+    if not items:
+        logger.warning(
+            "refresh_aborted reason=empty_fetch — source returned no rows; DB not modified"
+        )
+        return
+
     before = repository.count_po_items()
     logger.info("refresh_start items_before=%d", before)
 
-    repository.clear_po_items()
-
-    items = source.fetch_all_open_orders()
-    repository.upsert_items(items)
+    repository.replace_po_items(items)
 
     after = repository.count_po_items()
     logger.info("refresh_complete items_before=%d items_after=%d", before, after)

@@ -75,3 +75,8 @@ class FakeRepository:
 
     def count_po_items(self) -> int:
         return len(self._po_items)
+
+    def replace_po_items(self, items: list[dict]) -> None:
+        self._po_items.clear()
+        for item in items:
+            self._po_items[item["inventory_id"]] = dict(item)
