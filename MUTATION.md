@@ -53,7 +53,6 @@ effects are unaffected.
 |-----------|------|
 | sync_7, sync_8, sync_9 | services/sync.py — sync_loop_start first arg |
 | sync_30, sync_31 | services/sync.py — sync_item_error first arg |
-| sync_71, sync_72 | services/sync.py — sync_partial / sync_loop_complete first arg |
 | sync_82 | services/sync.py — sync_loop_complete first arg |
 | rsync_7, rsync_8, rsync_9 | services/receive_sync.py — receive_loop_start first arg |
 | refresh_14 | services/refresh.py — after=None only affects logger.info arg |
@@ -70,6 +69,7 @@ returned is identical; only the log level changes.
 | Mutant ID | Description |
 |-----------|-------------|
 | sync_71 | `errors > 0` → `errors >= 0` — warning fires on success path too; result unchanged |
+| sync_72 | `errors > 0` → `errors > 1` — warning suppressed on single-error run; result unchanged |
 | rsync_93 | `failed == 0 and no_match == 0` → `or` — info path fires even on partial; result unchanged |
 | rsync_94 | `failed == 0 and no_match == 0` → `failed != 0 and ...` — warning always fires; result unchanged |
 
