@@ -2,9 +2,21 @@
 
 A portable warehouse receiving automation with three operating modes: an
 interactive barcode-scanning desk application, a morning catalog-rebuild
-utility, and a headless receiving robot. All three share a single `.env`
-configuration file and a layered, dependency-injected architecture that keeps
-business logic testable without any live infrastructure.
+utility, and a headless receiving robot.
+
+> **Independent tool.** This project automates interactions with third-party
+> systems. It is not affiliated with or endorsed by the upstream
+> purchase-order portal vendor or the result-board vendor.
+
+---
+
+## Who should read what
+
+| You are… | Start here |
+|---|---|
+| Warehouse or office operator | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
+| Developer working on the code | [docs/FOR_DEVELOPERS.md](docs/FOR_DEVELOPERS.md) |
+| Contributor | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ---
 
@@ -31,40 +43,7 @@ breaker halts the loop automatically if the per-pass success rate drops below
 
 ---
 
-## Architecture
-
-Three layers; dependencies point inward only:
-
-```
-┌──────────────────────────────────────────────┐
-│  adapters/   edge layer — DB, portal,        │
-│              board API, scanner, printer, UI │
-│  ┌──────────────────────────────────────┐    │
-│  │  services/   orchestration          │    │
-│  │  ┌──────────────────────────────┐   │    │
-│  │  │  core/   pure domain logic  │   │    │
-│  │  │  no I/O, no framework       │   │    │
-│  │  └──────────────────────────────┘   │    │
-│  └──────────────────────────────────────┘    │
-└──────────────────────────────────────────────┘
-```
-
-- **core/** — error taxonomy, port protocols, schema (with validator), and
-  barcode-matching logic. No imports outside stdlib.
-- **services/** — orchestration (receive, sync, populate, refresh,
-  receive\_sync). Coordinates core via injected ports. No adapter imports.
-- **adapters/** — concrete implementations: SQLite repository, purchase order
-  source portal scraper, result sink board API client, portal receiving wizard,
-  barcode scanner, label printer, Tkinter UI.
-
-Dependency direction is mechanically enforced by
-[import-linter](https://import-linter.readthedocs.io) and the conformance gate
-(`python scripts/conformance.py`). Neither core nor services can import
-adapters; the compiler catches violations before merge.
-
----
-
-## Setup
+## Quickstart
 
 **Requirements:** Python ≥ 3.11. WinPython is the recommended distribution on
 Windows.
@@ -72,36 +51,8 @@ Windows.
 ```
 pip install -e ".[dev]"
 playwright install chromium   # needed for portal adapters (source + receiver)
+cp .env.example .env          # then fill every value
 ```
-
-**Configuration:**
-
-```
-cp .env.example .env
-# then open .env and fill every value
-```
-
-See `.env.example` for the full variable list with descriptions. The required
-groups are:
-
-| Group | Variables |
-|---|---|
-| Paths | `DB_PATH`, `LOG_DIR`, `DOWNLOAD_DIR` |
-| Purchase order source | `SOURCE_BASE_URL`, `SOURCE_USERNAME`, `SOURCE_PASSWORD` |
-| Result sink / board | `SINK_BASE_URL`, `SINK_API_TOKEN`, `SINK_BOARD_ID` |
-| Board groups | `SINK_RECEIVED_GROUP_ID`, `SINK_NO_MATCH_GROUP_ID`, `SINK_ATTENTION_GROUP_ID`, `SINK_READY_GROUP_ID` |
-| Board columns | `SINK_INVENTORY_ID_COL`, `SINK_MODEL_COL`, `SINK_SERIAL_COL`, `SINK_STATUS_COL` |
-| Receiving wizard | `RECEIVE_LOCATION`, `RECEIVE_WHSE_LOCATION` |
-| Mode switches | `SCANNER_TYPE`, `PRINTER_TYPE`, `SOURCE_TYPE`, `SINK_TYPE`, `RECEIVER_TYPE` |
-| Optional | `POLL_INTERVAL_SECS` (default 10), `RECEIVE_SCREENSHOT_DIR` (default `LOG_DIR/screenshots`) |
-
-`config.validate()` is the first call in every entry point. It reads `.env`,
-checks every required variable in one pass, and lists all missing values
-together so you fix them all at once.
-
----
-
-## Running
 
 ```bash
 receiving-app        # scanner desk UI (Tkinter)
@@ -109,45 +60,19 @@ receiving-refresh    # morning catalog rebuild — prompts "Type YES to confirm"
 receiving-robot      # headless receiving robot — Ctrl+C to stop
 ```
 
-`receiving-app` and `receiving-robot` log to `LOG_DIR/receiving_app.log`
-(rotating daily, 30-day retention). The receiving robot also writes per-step
-screenshots to `RECEIVE_SCREENSHOT_DIR`.
+Full setup instructions and daily operating procedures:
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ---
 
-## Dev / test mode
+## Architecture
 
-Set these switches in `.env` to run without any live portal or board:
-
-```
-SOURCE_TYPE=fake        # reads FAKE_SOURCE_DATA JSON instead of scraping
-SINK_TYPE=null          # logs outcomes instead of posting to the board API
-RECEIVER_TYPE=fake      # in-memory receive stub instead of Playwright wizard
-SCANNER_TYPE=manual     # keyboard text field instead of USB HID wedge
-PRINTER_TYPE=preview    # opens an HTML label in the browser instead of printing
-```
-
-**Run the test suite:**
-
-```bash
-pytest                  # all tests
-pytest -q               # quiet
-```
-
-**Full gate sequence (run before every commit):**
-
-```bash
-ruff check .
-ruff format --check .
-mypy core services adapters config.py
-lint-imports
-python scripts/conformance.py
-pytest --cov=core --cov=services --cov=config --cov-fail-under=95 -q
-```
-
-Coverage is measured over `core/`, `services/`, and `config.py` (the
-unit-testable layers). The mutation score gate (`mutmut`) is run separately in
-CI.
+Three layers; dependencies point inward only: a pure **core** (domain logic,
+no I/O) → **services** (orchestration) → **adapters** (edge: DB, portal,
+board API, scanner, printer, UI). The adapters are swappable behind their port
+protocols — the core and services layers are unaware of which concrete adapter
+is wired in. Dependency direction is enforced mechanically by import-linter and
+the conformance gate. Full detail in [docs/FOR_DEVELOPERS.md](docs/FOR_DEVELOPERS.md).
 
 ---
 
@@ -173,4 +98,5 @@ config.py           single config source — read env, validate, expose typed ac
 DEBT.md             deferred decisions ledger
 ```
 
-See `docs/RUNBOOK.md` for daily operating procedures and failure recovery.
+See [docs/RUNBOOK.md](docs/RUNBOOK.md) for the quick daily reference card once
+you are set up.
