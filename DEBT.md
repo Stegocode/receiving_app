@@ -20,22 +20,11 @@ SQLite manages its own durability; no non-DB file-artifact write exists in v1.
 Introduce atomic_write when/if a genuine non-DB file write appears (e.g. an export
 or summary file).
 
-[DEBT-T08-001] 2026-06-19 — `adapters/source.py` is PORTED but live-untested.
-CI has no browser binary, no credentials, and no live portal. The entire browser
-pipeline is mocked in tests. Validate the following against the live portal before
-declaring T-08 DONE:
-  - Timing constants (_LOGIN_SETTLE_SECS, _POST_LOGIN_SECS, _FILTER_SETTLE_SECS,
-    _NAV_SETTLE_SECS, _DOWNLOAD_TIMEOUT_SECS) — may need tuning per environment.
-  - Login form selectors: By.NAME "email", By.NAME "password", By.XPATH submit button.
-  - Filter checkbox IDs: "OpenFilter", "OnOrderFilter" — confirm these exist in the
-    current portal version.
-  - Location-save popup ID "save-current-location" — confirm absent/present behaviour.
-  - Export button selector: //i[contains(@class,'fa-file-excel-o')]/.. — confirm class name.
-  - Download filename keyword "serial-number-inventory" — confirm file naming convention.
-  - CSV column names: "Inventory Id", "PO #", "Model", "Category", "Product Group",
-    "Brand", "Tags" — confirm they match the current export format.
-Trigger: before T-08 is considered production-ready; run with `playwright install`
-/ chromedriver and real credentials in a local .env.
+[DEBT-T08-001] 2026-06-19 — LIVE-VERIFIED 2026-06-22 — `adapters/source.py` portal source validated live.
+Full catalog fetch ran successfully (~4218 rows, ~43s). All selectors, timing constants,
+CSV column names, and filter IDs confirmed against the live portal.
+Note: the 43-second fetch duration is the trigger to evaluate a faster source strategy
+(cookie-handoff or partial-export API) if refresh latency becomes a bottleneck.
 
 [DEBT-T08-002] 2026-06-19 — fetch_order always scrapes all open orders and filters.
 The portal has no single-PO endpoint; every fetch downloads the full on-order CSV.
@@ -48,11 +37,10 @@ hardcoding a screenshot directory path. Add screenshot capture when a SCREENSHOT
 config var is introduced (T-12 observability ticket).
 Trigger: T-12 adds LOG_DIR-relative screenshot path to config.
 
-[DEBT-T11b-001] 2026-06-19 — `adapters/ui/scanner_ui.py` and scanner adapters are not unit-tested in CI.
-The Tk view and scanner adapters (WedgeScanner, ManualScanner) require a display and a real Tk root
-to construct widgets. CI has no display environment and no USB scanner hardware. The testable
-scan/print orchestration logic lives in adapters/ui/controller.py, which is fully tested (4 tests,
-no Tk dependency). Validate the UI manually on macOS with a USB HID gun (wedge) and in manual mode.
+[DEBT-T11b-001] 2026-06-19 — LIVE-VERIFIED 2026-06-22 (Windows) — `adapters/ui/scanner_ui.py` manual entry mode and PO label printing validated live on Windows.
+The Tk view and scanner adapters still require a display to construct; CI has no display environment
+and no USB scanner hardware. Testable orchestration logic in adapters/ui/controller.py remains
+fully covered by 4 unit tests. Wedge scanner (USB HID) not yet tested on this machine.
 Trigger: any change to scanner_ui.py, scanner.py, or the scan state machine.
 
 [DEBT-T11c-001] 2026-06-20 — dev mode (SOURCE_TYPE=fake, SINK_TYPE=null) is unit-tested but not end-to-end validated.
@@ -61,21 +49,10 @@ The full running-app flow with SOURCE_TYPE=fake + SINK_TYPE=null has not been ex
 with a real UI session. Validate manually before relying on dev mode for onboarding or training.
 Trigger: before dev mode is used as the default training environment.
 
-[DEBT-T12-001] 2026-06-21 — REMEDIATED 2026-06-21 (sink.py column IDs injected; real-ID gate added; errors test hardened). `adapters/board.py` (BoardApiAdapter) is PORTED but live-untested.
-CI has no real API token, no live board, and no real group or column IDs. The entire API
-pipeline is mocked in tests. Validate the following against the live board before
-declaring T-12 DONE:
-  - SINK_BOARD_ID, SINK_READY_GROUP_ID, SINK_RECEIVED_GROUP_ID, SINK_NO_MATCH_GROUP_ID —
-    populate from the live board configuration.
-  - SINK_INVENTORY_ID_COL, SINK_MODEL_COL, SINK_SERIAL_COL, SINK_STATUS_COL — confirm
-    column IDs still valid against the current live board schema.
-  - Verify poll_ready pagination: confirm cursor is returned and followed correctly when
-    the READY group contains more than 500 items.
-  - Verify mark_received: confirm move_item_to_group succeeds and change_column_value
-    sets the status column to RECEIVED in the live board.
-  - Verify mark_no_match: confirm move_item_to_group moves the item to the NO MATCH group.
-Trigger: before T-13 (receive executor) is wired to a live board; run with real
-credentials in a local .env pointing at the live board.
+[DEBT-T12-001] 2026-06-21 — LIVE-VERIFIED 2026-06-22 — `adapters/board.py` (BoardApiAdapter) validated live.
+All group IDs, column IDs, mark_received, and mark_no_match confirmed against the live board.
+Pagination not fully stress-tested (READY group < 500 items in this run).
+(Previously REMEDIATED 2026-06-21 for column ID injection and gate hardening.)
 
 [DEBT-T13-001] 2026-06-21 — `adapters/receiver.py` (PortalReceiver) is PORTED but live-untested.
 CI has no browser binary, no portal credentials, and no live session. Tests exercise
@@ -109,19 +86,11 @@ DB reconciliation (cleaning up RECEIVED rows from the local SQLite store after a
 receive) is also deferred — currently out of scope for the orchestrator.
 Trigger: first live run of the full receiving robot with real credentials and a populated READY group.
 
-[DEBT-T09-001] 2026-06-19 — `adapters/sink.py` is PORTED but live-untested.
-CI has no real API token, no live board, and no real group IDs. The entire API
-pipeline is mocked in tests. Validate the following against the live board before
-declaring T-09 DONE:
-  - SINK_BASE_URL, SINK_BOARD_ID, SINK_RECEIVED_GROUP_ID, SINK_NO_MATCH_GROUP_ID,
-    SINK_ATTENTION_GROUP_ID — populate from the oracle project .env (the sink API
-    token, board ID, and group IDs from the oracle's result-sink client module).
-  - Column IDs (_STATUS_COL, _INVENTORY_ID_COL, _MODEL_COL) — confirm still
-    valid against the live board schema.
-  - Verify that create_item with column_values JSON is accepted by the board API
-    and items land in the expected groups.
-Trigger: before T-09 is considered production-ready; run with real credentials in a
-local .env pointing at the live board.
+[DEBT-T09-001] 2026-06-19 — LIVE-VERIFIED 2026-06-22 — `adapters/sink.py` sink adapter verified live against the real board.
+All group IDs and column IDs confirmed. create_item accepted by the board API; items
+land in the correct groups with correct column values. Root cause of earlier 401 errors
+identified as SINK_BASE_URL being set to the web board URL instead of the API endpoint
+(documented in GETTING_STARTED troubleshooting).
 
 [DEBT-T15-001] 2026-06-21 — Plain-text logging; no machine-parseable output yet.
 Logs are written as human-readable text to a rotating file (receiving_app.log). If a
@@ -163,14 +132,31 @@ appear verbatim in the message. The gap is cosmetic (inconsistent call conventio
 Standardize on one structured style (extra={} preferred) in a future cleanup pass.
 Trigger: adding a log aggregator or formatter that expects one call convention.
 
-[DEBT-T16.2-001] 2026-06-22 — ZebraPrinter (adapters/printer.py) is PORTED but live-untested.
-CI has no Zebra printer driver, no win32print module, and no physical label printer.
-The ZPL string generation and printer enumeration logic (adapters/printer.py) was ported
-byte-faithfully from the oracle label_printer.py, but has never been exercised against
-a real Zebra printer. Validate the following before relying on ZebraPrinter in production:
-  - _find_zebra_printer(): confirm search terms match the driver name on the target machine.
-  - _build_zpl(): print a test label and verify layout (positions, font sizes, barcode region).
-  - win32print RAW spool path: confirm StartDocPrinter/StartPagePrinter/EndDocPrinter
-    sequence and UTF-8 encoding are accepted by the installed driver.
-  - PRINTER_TYPE=zebra in .env: verify the config switch selects ZebraPrinter at startup.
+[DEBT-T16.2-001] 2026-06-22 — PARTIAL-VERIFIED 2026-06-22 — ZebraPrinter (adapters/printer.py) live-printed a PO label successfully.
+win32print spool path, ZPL generation, _find_zebra_printer(), and PRINTER_TYPE=zebra config
+switch confirmed for the PO label code path. Receiving label (separate ZPL generation path)
+is still unverified — validate before relying on ZebraPrinter for the receiving workflow.
 Trigger: before the scanner is used in production receiving with label printing enabled.
+
+[DEBT-PRINTER-001] 2026-06-22 — ZebraPrinter printer-name search list is HARDCODED in adapters/printer.py.
+_find_zebra_printer() matches installed printer names against hardcoded keyword terms. If the
+installed Zebra driver name on a new machine does not contain those keywords, the printer is
+silently not found and the scan fails at print time. Must be made configurable (e.g. a
+PRINTER_NAME env var with a fallback search list) before the app is shared as a generic
+template or deployed to machines with differently-named drivers.
+Trigger: before sharing as a generic template or deploying to a new machine with a Zebra printer.
+
+[DEBT-SETUP-001] 2026-06-22 — Interactive setup wizard deferred (issue #27 long-term).
+A guided setup wizard (step-by-step env var entry with inline validation feedback) was
+requested in issue #27. The near-term fix is the expanded GETTING_STARTED.md (first-run
+validation checklist + env var reference). The wizard is deferred until the receiving robot
+is hardened and the docs have been validated with at least one new-hire onboarding.
+Trigger: second new-hire setup attempt reveals the docs are still insufficient.
+
+[DEBT-NAMING-001] 2026-06-22 — Internal match_status value "received" is semantically misleading.
+In services/ and core/, the scan outcome "received" means "matched and ready for the robot to
+portal-receive" — it does not mean the item has been physically received at the portal.
+The routing was corrected in the prior PR (items route to READY on the board); the internal
+name was deliberately left unchanged to avoid a broad rename mid-sprint.
+Rename received → ready in a dedicated cleanup PR to align with the domain meaning.
+Trigger: any refactor that touches match_status or the scan/receive state machine.

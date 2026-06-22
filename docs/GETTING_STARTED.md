@@ -37,13 +37,15 @@ cp .env.example .env
 Open `.env` in a text editor and fill every line. The settings are grouped as
 follows:
 
-**Paths** — where the application stores its database, logs, and downloads:
+**Paths** — where the application stores its database, logs, and downloads.
+All three must be **absolute paths**. Create the directories before starting the
+application — it will not create them for you.
 
 | Setting | What it is |
 |---|---|
-| `DB_PATH` | Path to the SQLite inventory database file |
-| `LOG_DIR` | Directory for log files and screenshots |
-| `DOWNLOAD_DIR` | Directory for temporary download files |
+| `DB_PATH` | Absolute path to the SQLite database file (created automatically; its parent directory must already exist) |
+| `LOG_DIR` | Absolute path to the directory for rotating log files |
+| `DOWNLOAD_DIR` | Absolute path to a scratch directory for portal download files |
 
 **Purchase order source** — credentials for the portal that holds open orders:
 
@@ -53,13 +55,16 @@ follows:
 | `SOURCE_USERNAME` | Login username |
 | `SOURCE_PASSWORD` | Login password |
 
-**Result sink / board** — connection details for the board where outcomes are posted:
+**Result sink / board** — connection details for the board where outcomes are posted.
+`SINK_BASE_URL` must be the **API endpoint URL**, not the board's web browser URL
+(e.g. `https://api.your-board-provider.com/v2`, not `https://your-board-provider.com/boards/12345`).
+Using the web URL will cause 401 Unauthorized errors.
 
 | Setting | What it is |
 |---|---|
-| `SINK_BASE_URL` | API base URL for the result board |
-| `SINK_API_TOKEN` | API authentication token |
-| `SINK_BOARD_ID` | ID of the receiving board |
+| `SINK_BASE_URL` | API endpoint URL for the result board service (no trailing slash) |
+| `SINK_API_TOKEN` | API authentication token for the result board |
+| `SINK_BOARD_ID` | Numeric board ID on the result board service |
 
 **Board groups** — IDs of the board groups that items move between:
 
@@ -79,6 +84,38 @@ follows:
 | `SINK_SERIAL_COL` | Column holding the serial number |
 | `SINK_STATUS_COL` | Column holding the status value |
 
+**How to find your board's group and column IDs**
+
+Run the following GraphQL query against `SINK_BASE_URL` with the header
+`Authorization: <SINK_API_TOKEN>`. Replace `YOUR_BOARD_ID` with the numeric value of
+`SINK_BOARD_ID`:
+
+```graphql
+{
+  boards(ids: [YOUR_BOARD_ID]) {
+    groups { id title }
+    columns { id title type }
+  }
+}
+```
+
+Map each result to the matching variable:
+
+| Variable | What to look for in the response |
+|---|---|
+| `SINK_READY_GROUP_ID` | The `groups` entry whose `title` is your READY group |
+| `SINK_RECEIVED_GROUP_ID` | The `groups` entry whose `title` is your RECEIVED group |
+| `SINK_NO_MATCH_GROUP_ID` | The `groups` entry whose `title` is your NO MATCH group |
+| `SINK_ATTENTION_GROUP_ID` | The `groups` entry whose `title` is your ATTENTION group |
+| `SINK_INVENTORY_ID_COL` | The `columns` entry for the inventory ID field |
+| `SINK_MODEL_COL` | The `columns` entry for the model name field |
+| `SINK_SERIAL_COL` | The `columns` entry for the serial number field |
+| `SINK_STATUS_COL` | The `columns` entry with `type: "color"` — the status/color column |
+
+The status column (`SINK_STATUS_COL`) must have label options named exactly **READY**,
+**RECEIVED**, **NO MATCH**, and **ATTENTION** in the board's column settings.
+The application writes these labels by name.
+
 **Receiving wizard** — location labels used when the robot completes a receipt:
 
 | Setting | What it is |
@@ -86,19 +123,119 @@ follows:
 | `RECEIVE_LOCATION` | Location label for the receiving wizard |
 | `RECEIVE_WHSE_LOCATION` | WHSE location label |
 
+**Adapter switches** — control which mode each component runs in:
+
+| Setting | Dev value | Live value | What it controls |
+|---|---|---|---|
+| `SOURCE_TYPE` | `fake` | `portal` | Where PO data comes from: JSON fixture or live portal scraper |
+| `SINK_TYPE` | `null` | `graphql` | Where results are posted: nowhere (log only) or live board API |
+| `RECEIVER_TYPE` | `fake` | `portal` | How portal receiving is performed: simulated or live portal wizard |
+| `SCANNER_TYPE` | `manual` | `wedge` | How barcodes are entered: text box or USB HID barcode gun |
+| `PRINTER_TYPE` | `preview` | `zebra` | How labels are printed: browser window or physical Zebra printer |
+
+All switches default to their live values when omitted from `.env`. Set them to their
+dev values when validating a new install without live credentials (see
+[First-run validation](#3-first-run-validation) below).
+
+> `PRINTER_TYPE` accepts only `preview` or `zebra` — there is no `fake` value for the printer.
+
 **Optional settings** (defaults shown):
 
 | Setting | Default | What it is |
 |---|---|---|
 | `POLL_INTERVAL_SECS` | `10` | Seconds the robot sleeps between passes |
-| `RECEIVE_SCREENSHOT_DIR` | `LOG_DIR/screenshots` | Where the robot saves step screenshots |
+| `RECEIVE_SCREENSHOT_DIR` | `LOG_DIR/screenshots` | Where the robot saves receiving wizard screenshots |
+| `FAKE_SOURCE_DATA` | `test_data/pos.json` | JSON fixture file used when `SOURCE_TYPE=fake` |
 
 The application checks every required setting on startup and lists any missing
 values together so you can fix them all at once.
 
 ---
 
-## 3. Daily start sequence
+## 3. First-run validation
+
+### Setup sequence
+
+Complete these steps in order on a fresh install:
+
+1. **Install Python 3.11 or newer** — on Windows, [WinPython](https://winpython.github.io/)
+   is the recommended distribution.
+
+2. **Install dependencies:**
+   ```
+   pip install -e ".[dev]"
+   playwright install chromium
+   ```
+
+3. **Create the path directories** for `DB_PATH`, `LOG_DIR`, and `DOWNLOAD_DIR`.
+   These directories must exist before the application starts.
+
+4. **Copy `.env.example` to `.env`** and fill in every value.
+   See [Configuration](#2-configuration) above for descriptions.
+
+### Validation checklist (dev/fake mode)
+
+Before connecting to live systems, confirm the install works using fake adapters
+that need no credentials. Add these lines to `.env` (or set them as environment variables):
+
+```
+SOURCE_TYPE=fake
+SINK_TYPE=null
+RECEIVER_TYPE=fake
+SCANNER_TYPE=manual
+PRINTER_TYPE=preview
+```
+
+> `PRINTER_TYPE` only accepts `preview` or `zebra` — there is no `fake` value.
+
+Then run each command and verify the expected result:
+
+**Step 1 — Catalog refresh**
+```
+receiving-refresh
+```
+Type `YES` at the prompt. On success:
+```
+Refresh complete — N items in catalog.
+```
+A small number matching the fixture file is expected. This confirms `SOURCE_TYPE=fake` is working.
+
+**Step 2 — Scanner UI**
+```
+receiving-app
+```
+Enter `PO:10001` in the PO field and press Enter to load the fixture purchase order.
+Then type any model number, press Enter, then type any serial number and press Enter.
+A MATCH or NO_MATCH result confirms the scanner flow is wired correctly.
+Close the window when done.
+
+**Step 3 — Receiving robot**
+```
+receiving-robot
+```
+You should see a poll-loop start message. Press **Ctrl+C** to stop cleanly.
+This confirms `SINK_TYPE=null` and `RECEIVER_TYPE=fake` are selected correctly.
+
+**If all three commands run without errors, your install is correct.**
+
+### Switching to live mode
+
+Once dev-mode validation passes, update `.env` to the live values:
+
+```
+SOURCE_TYPE=portal
+SINK_TYPE=graphql
+RECEIVER_TYPE=portal
+SCANNER_TYPE=wedge
+PRINTER_TYPE=zebra
+```
+
+Fill in all `SOURCE_*`, `SINK_*`, and `RECEIVE_*` settings with real values, then re-run
+`receiving-refresh` to confirm a live catalog load.
+
+---
+
+## 4. Daily start sequence
 
 ### Step 1 — Refresh the catalog
 
@@ -144,7 +281,7 @@ See the sections below for each mode.
 
 ---
 
-## 4. Scanner desk operation
+## 5. Scanner desk operation
 
 Launch the scanner UI:
 
@@ -183,7 +320,7 @@ claim, set `claimed_at = NULL` for the affected row in the
 
 ---
 
-## 5. Receiving robot operation
+## 6. Receiving robot operation
 
 The robot works through the board automatically without a screen. Launch it:
 
@@ -226,7 +363,7 @@ after you have investigated.
 
 ---
 
-## 6. Reading the log
+## 7. Reading the log
 
 Logs are written to `LOG_DIR/receiving_app.log`. The file rotates at midnight
 and the last 30 days are kept.
@@ -346,7 +483,85 @@ before doing this in a live environment.
 
 ---
 
-### 6. Scanner reads the wrong PO (locked to wrong purchase order)
+### 7. `PRINTER_TYPE` rejected at startup
+
+**Symptom:** The application fails to start with a config validation error:
+```
+PRINTER_TYPE — got 'fake', must be one of ['preview', 'zebra'].
+```
+
+**Cause:** `PRINTER_TYPE` only accepts `preview` or `zebra`. There is no `fake` value —
+use `preview` (opens a browser window) during development and testing.
+
+**Action:** Set `PRINTER_TYPE=preview` in `.env`.
+
+---
+
+### 8. Sink returns 401 Unauthorized
+
+**Symptom:** `receiving-app` or `receiving-robot` raises a 401 error when posting results
+to the board.
+
+**Check:**
+- `SINK_BASE_URL` must be the **API endpoint**, not the web board URL.
+  For example, `https://api.your-board-provider.com/v2` — not `https://your-board-provider.com/boards/12345`.
+  The web URL will always return 401 when used as an API endpoint.
+- `SINK_API_TOKEN` must be a valid API token, not a user password.
+
+**Action:** Correct `SINK_BASE_URL` and `SINK_API_TOKEN` in `.env`.
+
+---
+
+### 9. Zebra printer not found
+
+**Symptom:** The scanner UI shows `print_failed` in the status panel. The log shows a
+`print_error` line with a message like "no Zebra printer found".
+
+**Cause:** The printer adapter searches for an installed printer whose driver name contains
+certain keywords. If the installed Windows printer name does not contain those keywords, the
+printer is not found.
+
+**Check:**
+- Open **Settings → Bluetooth & devices → Printers & scanners** on the receiving machine.
+- Note the exact driver name shown for the Zebra printer.
+
+**Action:** If the driver name does not match, this currently requires a code change —
+the search list is hardcoded (tracked as DEBT-PRINTER-001). As a temporary workaround,
+set `PRINTER_TYPE=preview` to continue receiving while the search list is updated.
+The receiving record is already saved; the only thing that failed was the label print.
+
+---
+
+### 10. Config validation errors at startup
+
+**Symptom:** The application refuses to start and prints a list of problems, for example:
+```
+Configuration invalid — fix these in .env before starting:
+  DB_PATH — required but not set. See .env.example for description.
+  SINK_BOARD_ID — required but not set. See .env.example for description.
+```
+
+**Action:** Each line names the exact variable that is missing or invalid. Open `.env`,
+locate each listed variable, and fill in or correct its value. Re-run the command —
+validation runs again on every start.
+
+---
+
+### 11. `receiving-app` ImportError on an old checkout
+
+**Symptom:** Running `receiving-app` raises:
+```
+ImportError: No module named '__main__'
+```
+
+**Cause:** This was a known issue on checkouts before PR #28. The entry point was renamed
+from `__main__` to `scanner_runner`.
+
+**Action:** Pull the latest code and re-run `pip install -e ".[dev]"`.
+
+---
+
+### 12. Scanner reads the wrong PO (locked to wrong purchase order)
 
 **Symptom:** scans are matched against the wrong purchase order; labels print
 with an incorrect PO number.
