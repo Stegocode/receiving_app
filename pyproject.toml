@@ -29,9 +29,10 @@ dev = [
 [project.scripts]
 receiving-app = "__main__:main"
 receiving-refresh = "refresh_runner:main"
+receiving-robot = "robot_runner:main"
 
 [tool.setuptools]
-py-modules = ["config", "__main__", "refresh_runner"]
+py-modules = ["config", "__main__", "refresh_runner", "robot_runner"]
 
 [tool.setuptools.packages.find]
 include = ["core*", "services*", "adapters*"]
