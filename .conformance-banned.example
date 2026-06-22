@@ -1,0 +1,22 @@
+# .conformance-banned — banned term list for gate_a
+#
+# Copy this file to .conformance-banned (gitignored) and replace the placeholder
+# lines below with the real proprietary terms for your deployment.
+#
+# Format:
+#   - One term per line.
+#   - Lines starting with "#" are comments and are ignored.
+#   - Blank lines are ignored.
+#   - Terms are matched case-insensitively against both file contents and file paths.
+#   - Both names (client, vendor, operator) and real ID fragments belong here.
+#
+# In CI, this file is materialised from the CONFORMANCE_BANNED repository secret
+# (Settings → Secrets and variables → Actions). gate_a will SKIP (with a warning)
+# if .conformance-banned is absent locally, but CI fails hard if the secret is unset.
+
+your-client-name
+your-operator-username
+your-source-vendor-name
+your-sink-vendor-name
+your-board-column-id-fragment
+your-numeric-board-id

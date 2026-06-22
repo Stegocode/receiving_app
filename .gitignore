@@ -1,4 +1,5 @@
 .env
+.conformance-banned
 build-decisions.md
 __pycache__/
 *.pyc

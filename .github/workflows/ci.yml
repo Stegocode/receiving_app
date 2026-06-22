@@ -33,6 +33,15 @@ jobs:
       - name: import-linter
         run: lint-imports
 
+      - name: Provision banned terms
+        env:
+          CONFORMANCE_BANNED: ${{ secrets.CONFORMANCE_BANNED }}
+        run: |
+          if [ -z "$CONFORMANCE_BANNED" ]; then
+            echo "CONFORMANCE_BANNED secret is not set — banned-term gate cannot run"; exit 1
+          fi
+          printf '%s\n' "$CONFORMANCE_BANNED" > .conformance-banned
+
       - name: conformance gates
         run: python scripts/conformance.py
 

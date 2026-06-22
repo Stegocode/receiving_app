@@ -35,19 +35,14 @@ def read(path):
 
 
 # ── a. Banned names ───────────────────────────────────────────────────────────
-# Runtime "+" concatenation keeps the banned strings out of this source file.
-_ALWAYS_BANNED = [
-    "Bas" + "co",  # client name
-    "scott" + "t",  # operator username
-    "Home" + "Source",  # vendor name — use adapters/source.py
-    "Mon" + "day",  # vendor name — use adapters/sink.py
-]
+# Terms are loaded at runtime from .conformance-banned (gitignored).
+# The real terms never appear in this file — see .conformance-banned.example.
 
-# Real proprietary board ID fragments — must never appear in committed files.
-_BANNED_REAL_IDS = [
-    "mm" + "3y",  # board column ID hash fragment
-    "184160" + "41666",  # numeric board ID
-]
+
+def _load_banned_terms() -> list[str]:
+    """Read .conformance-banned; return non-blank, non-comment lines. [] if absent."""
+    text = read(Path(".conformance-banned"))
+    return [line for line in text.splitlines() if line and not line.startswith("#")]
 
 
 def banned_name_hit(name: str, text: str, path: str) -> bool:
@@ -57,15 +52,20 @@ def banned_name_hit(name: str, text: str, path: str) -> bool:
 
 
 def gate_a(files):
+    terms = _load_banned_terms()
+    if not terms:
+        print(
+            "gate_a: .conformance-banned not found — banned-term check SKIPPED"
+            " (CI provides it from a secret)",
+            file=sys.stderr,
+        )
+        return
     for f in files:
         text = read(f)
         norm = str(f).replace("\\", "/")
-        for name in _ALWAYS_BANNED:
-            if banned_name_hit(name, text, norm):
-                fail("a", f"{norm}: contains banned name '{name}'")
-        for fragment in _BANNED_REAL_IDS:
-            if fragment in text:
-                fail("a", f"{norm}: contains real board ID fragment '{fragment}'")
+        for term in terms:
+            if banned_name_hit(term, text, norm):
+                fail("a", f"{norm}: contains a banned term")
 
 
 # ── b. Absolute paths ─────────────────────────────────────────────────────────
