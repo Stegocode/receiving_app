@@ -80,6 +80,7 @@ class Printer(Protocol):
     """
 
     def print_label(self, record: ReceivingRecord) -> None: ...
+    def print_po_label(self, po_number: str) -> None: ...
 
 
 @runtime_checkable

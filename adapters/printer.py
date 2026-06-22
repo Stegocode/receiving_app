@@ -79,6 +79,25 @@ def _build_zpl(record: ReceivingRecord) -> str:
     )
 
 
+def _build_po_zpl(po_number: str) -> str:
+    """Build a 4" x 2" ZPL PO label. Barcode encodes 'PO:{po_number}'."""
+    today = date.today().strftime("%m/%d/%Y")
+    po = _zpl_safe(po_number)
+    bc = _zpl_safe(f"PO:{po_number}")
+    return (
+        "^XA\n"
+        "^PW812\n"
+        "^LL406\n"
+        "^CI28\n"
+        "^FO10,15^A0N,28,28^FDPURCHASE ORDER^FS\n"
+        f"^FO10,55^A0N,80,80^FD{po}^FS\n"
+        f"^FO10,152^BY3^BCN,80,N,N,N^FD{bc}^FS\n"
+        f"^FO0,266^A0N,28,28^FB812,1,0,C^FD{bc}^FS\n"
+        f"^FO10,316^A0N,22,22^FDPrinted: {today}^FS\n"
+        "^XZ\n"
+    )
+
+
 def _find_zebra_printer() -> str:
     """Return the first Zebra/ZDesigner printer name, or empty string if none found.
 
@@ -162,6 +181,36 @@ class ZebraPrinter:
                 f"ZPL spool failed for inventory_id={record.inventory_id!r} — {exc}"
             ) from exc
 
+    def print_po_label(self, po_number: str) -> None:
+        printer_name = _find_zebra_printer()
+        if not printer_name:
+            raise PrinterError(
+                "No Zebra printer found — install a ZPL-capable Zebra driver and retry."
+            )
+        zpl = _build_po_zpl(po_number)
+        try:
+            import win32print  # type: ignore[import-untyped]
+
+            h = win32print.OpenPrinter(printer_name)
+            try:
+                win32print.StartDocPrinter(h, 1, ("PO Label", None, "RAW"))
+                try:
+                    win32print.StartPagePrinter(h)
+                    win32print.WritePrinter(h, zpl.encode("utf-8"))
+                    win32print.EndPagePrinter(h)
+                finally:
+                    win32print.EndDocPrinter(h)
+            finally:
+                win32print.ClosePrinter(h)
+        except ImportError as exc:
+            raise PrinterError(
+                "win32print not available — ZebraPrinter requires Windows with pywin32 installed."
+            ) from exc
+        except Exception as exc:
+            raise PrinterError(
+                f"PO label spool failed for po_number={po_number!r} — {exc}"
+            ) from exc
+
 
 class PreviewPrinter:
     """Renders a receiving label as HTML and opens it in the default browser."""
@@ -177,6 +226,24 @@ class PreviewPrinter:
             _open(tmp.as_uri())
         except Exception as exc:
             raise PrinterError(f"preview label failed — {exc}") from exc
+
+    def print_po_label(self, po_number: str) -> None:
+        try:
+            html = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                "<title>PO Label</title></head><body>"
+                f"<h1>Purchase Order</h1><p style='font-size:3em'>{po_number}</p>"
+                f"<p>Barcode: PO:{po_number}</p>"
+                "</body></html>"
+            )
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".html", delete=False, encoding="utf-8"
+            ) as fh:
+                fh.write(html)
+                tmp = Path(fh.name)
+            _open(tmp.as_uri())
+        except Exception as exc:
+            raise PrinterError(f"preview PO label failed — {exc}") from exc
 
 
 def _render_label(record: ReceivingRecord) -> str:

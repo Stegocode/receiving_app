@@ -50,6 +50,9 @@ class ReceivingUI:
     Call run() to create the Tk root, build all widgets, and enter mainloop.
     """
 
+    _manual_model_entry: tk.Entry
+    _manual_serial_entry: tk.Entry
+
     def __init__(
         self,
         process: Callable[[str, str, str], ReceivingRecord],
@@ -80,11 +83,17 @@ class ReceivingUI:
 
         if hasattr(scanner, "focus_entry"):
             scan_entry = scanner.focus_entry()
+            _allow = (
+                self._po_input,
+                scan_entry,
+                self._manual_model_entry,
+                self._manual_serial_entry,
+            )
 
             def _poll_focus() -> None:
                 try:
                     focused = root.focus_get()
-                    if focused not in (self._po_input, scan_entry):
+                    if focused not in _allow:
                         scan_entry.focus_force()
                 except Exception:
                     pass
@@ -227,6 +236,7 @@ class ReceivingUI:
             pady=10,
             cursor="hand2",
         )
+        scan_states.build_manual_frame(self, p)
 
     # ── Scan handling ──────────────────────────────────────────────────────────
 
@@ -269,6 +279,7 @@ class ReceivingUI:
         self._model_scan = None
         scan_states.set_idle(self)
         self._log(f"PO switched to {po_number} — scan model")
+        threading.Thread(target=self._print_po_label_bg, args=(po_number,), daemon=True).start()
 
     def _run_match(self, model: str, serial: str, po: str) -> None:
         try:
@@ -295,9 +306,6 @@ class ReceivingUI:
 
     # ── State / flash / alarm — see adapters/ui/scan_states.py ───────────────
 
-    def _set_right_bg(self, color: str) -> None:
-        scan_states.set_right_bg(self, color)
-
     def _set_idle(self) -> None:
         scan_states.set_idle(self)
 
@@ -313,20 +321,11 @@ class ReceivingUI:
     def _dismiss_no_match(self, _event: object = None) -> None:
         scan_states.dismiss_no_match(self)
 
-    def _start_flash(self) -> None:
-        scan_states.start_flash(self)
-
-    def _do_flash(self, current: str) -> None:
-        scan_states.do_flash(self, current)
-
-    def _stop_flash(self) -> None:
-        scan_states.stop_flash(self)
-
-    def _start_alarm(self) -> None:
-        scan_states.start_alarm(self._alarm_event, self._root.bell)
-
-    def _stop_alarm(self) -> None:
-        self._alarm_event.set()
+    def _print_po_label_bg(self, po_number: str) -> None:
+        try:
+            self._printer.print_po_label(po_number)
+        except Exception as exc:
+            self._log(f"PO {po_number} label: {exc}")
 
     # ── Status log ────────────────────────────────────────────────────────────
 
@@ -390,6 +389,7 @@ class ReceivingUI:
     def _add_po(self, po: str) -> None:
         if po not in self._active_pos:
             self._active_pos.append(po)
+            threading.Thread(target=self._print_po_label_bg, args=(po,), daemon=True).start()
         self._current_po = po
         self._set_po_list(self._active_pos)
         self._set_idle()

@@ -1,7 +1,8 @@
 """
-Owns: color/font constants and scan state machine logic for the receiving UI.
+Owns: color/font constants, scan state machine logic, and manual-entry widgets for the
+      receiving UI.
 Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3.
-May import: core.schema, sys, threading, time, tkinter (for type hints only).
+May import: core.schema, sys, threading, time, tkinter.
 
 State markers: IDLE, MID_SCAN, MATCHING, MATCH_FOUND, NO_MATCH, PRINT_FAILED.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+import tkinter as tk
 from typing import Any
 
 from core.schema import ReceivingRecord
@@ -55,8 +57,9 @@ def set_right_bg(ui: Any, color: str) -> None:
 def set_idle(ui: Any) -> None:
     ui._state = "IDLE"
     ui._model_scan = None
-    ui._stop_alarm()
-    ui._stop_flash()
+    ui._alarm_event.set()
+    stop_flash(ui)
+    hide_manual_entry(ui)
     ui._reset_btn.place_forget()
     set_right_bg(ui, C_IDLE)
     if ui._current_po:
@@ -79,8 +82,8 @@ def set_mid_scan(ui: Any, model_text: str) -> None:
 def set_match_found(ui: Any, record: ReceivingRecord) -> None:
     ui._state = "MATCH_FOUND"
     ui._model_scan = None
-    ui._stop_alarm()
-    ui._stop_flash()
+    ui._alarm_event.set()
+    stop_flash(ui)
     set_right_bg(ui, C_MATCH)
     ui._state_lbl.configure(text="MATCHED", fg=C_WHITE)
     ui._sec_lbl.configure(
@@ -92,7 +95,7 @@ def set_match_found(ui: Any, record: ReceivingRecord) -> None:
         ),
         fg=C_WHITE,
     )
-    ui._root.after(2000, ui._set_idle)
+    ui._root.after(2000, set_idle, ui)
 
 
 def set_no_match(ui: Any) -> None:
@@ -101,8 +104,8 @@ def set_no_match(ui: Any) -> None:
     set_right_bg(ui, C_NOMATCH)
     ui._state_lbl.configure(text="NOT ON PO", fg=C_WHITE)
     ui._sec_lbl.configure(text="SET ASIDE  ·  Esc to dismiss", fg=C_WHITE)
-    ui._start_flash()
-    ui._start_alarm()
+    start_flash(ui)
+    start_alarm(ui._alarm_event, ui._root.bell)
 
 
 def set_print_failed(ui: Any, record: ReceivingRecord) -> None:
@@ -134,7 +137,7 @@ def do_flash(ui: Any, current: str) -> None:
         return
     nxt = C_NOMATCH2 if current == C_NOMATCH else C_NOMATCH
     set_right_bg(ui, nxt)
-    ui._flash_after_id = ui._root.after(400, ui._do_flash, nxt)
+    ui._flash_after_id = ui._root.after(400, do_flash, ui, nxt)
 
 
 def stop_flash(ui: Any) -> None:
@@ -168,3 +171,100 @@ def _alarm_loop(alarm_event: threading.Event) -> None:
         if alarm_event.is_set():
             break
         time.sleep(0.2)
+
+
+# ── Manual entry ──────────────────────────────────────────────────────────────
+
+
+def _entry(parent: Any, var: Any) -> Any:
+    """Return a styled tk.Entry bound to var."""
+    return tk.Entry(
+        parent,
+        textvariable=var,
+        bg=C_INPUT_BG,
+        fg=C_WHITE,
+        insertbackground=C_WHITE,
+        font=("Arial", 20),
+        relief="flat",
+        bd=4,
+        width=22,
+    )
+
+
+def build_manual_frame(ui: Any, parent: Any) -> None:
+    """Build the hidden manual-entry overlay and the 'Type Model' button."""
+    f = tk.Frame(parent, bg=C_IDLE)
+    ui._manual_frame = f
+    tk.Label(f, text="Model number:", bg=C_IDLE, fg=C_DIM, font=F_LABEL).pack(pady=(0, 2))
+    ui._manual_model_var = tk.StringVar()
+    ui._manual_model_entry = _entry(f, ui._manual_model_var)
+    ui._manual_model_entry.pack(pady=(0, 8))
+    ui._manual_model_entry.bind("<Return>", lambda _e: ui._manual_serial_entry.focus_set())
+    tk.Label(f, text="Serial number:", bg=C_IDLE, fg=C_DIM, font=F_LABEL).pack(pady=(0, 2))
+    ui._manual_serial_var = tk.StringVar()
+    ui._manual_serial_entry = _entry(f, ui._manual_serial_var)
+    ui._manual_serial_entry.pack(pady=(0, 8))
+    ui._manual_serial_entry.bind("<Return>", lambda _e: on_manual_submit(ui))
+    tk.Button(
+        f,
+        text="Submit",
+        command=lambda: on_manual_submit(ui),
+        bg=C_ACCENT,
+        fg=C_WHITE,
+        font=F_LABEL,
+        relief="flat",
+        padx=12,
+        cursor="hand2",
+    ).pack(pady=(4, 0))
+    ui._type_btn = tk.Button(
+        parent,
+        text="Type Model",
+        command=lambda: show_manual_entry(ui),
+        bg="#4A6278",
+        fg=C_WHITE,
+        font=("Arial", 14),
+        relief="flat",
+        padx=18,
+        pady=10,
+        cursor="hand2",
+    )
+    ui._type_btn.place(relx=0.5, rely=0.82, anchor="center")
+
+
+def show_manual_entry(ui: Any) -> None:
+    """Show the manual model+serial form; only valid from IDLE or MATCH_FOUND."""
+    if ui._state not in ("IDLE", "MATCH_FOUND"):
+        return
+    if not ui._current_po:
+        ui._log("Set a PO first before using manual entry")
+        return
+    ui._manual_model_var.set("")
+    ui._manual_serial_var.set("")
+    ui._manual_frame.place(relx=0.5, rely=0.68, anchor="center")
+    ui._type_btn.configure(text="Cancel", command=lambda: hide_manual_entry(ui))
+    ui._manual_model_entry.focus_force()
+
+
+def hide_manual_entry(ui: Any) -> None:
+    """Hide the manual entry form and restore the 'Type Model' button."""
+    ui._manual_frame.place_forget()
+    ui._type_btn.configure(text="Type Model", command=lambda: show_manual_entry(ui))
+
+
+def on_manual_submit(ui: Any) -> None:
+    """Submit typed model+serial; route through the same path as a barcode scan."""
+    model = ui._manual_model_var.get().strip()
+    serial = ui._manual_serial_var.get().strip()
+    hide_manual_entry(ui)
+    if not model:
+        ui._log("Model number is required for manual entry")
+        return
+    if not ui._current_po:
+        ui._log("Set a PO first before using manual entry")
+        return
+    po = ui._current_po
+    ui._model_scan = model
+    ui._state = "MATCHING"
+    ui._root.after(0, ui._state_lbl.configure, {"text": "MATCHING…", "fg": C_WHITE})
+    ui._root.after(0, ui._sec_lbl.configure, {"text": f"Model: {model}", "fg": C_DIM})
+    threading.Thread(target=ui._run_match, args=(model, serial, po), daemon=True).start()
