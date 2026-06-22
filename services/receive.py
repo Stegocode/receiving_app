@@ -40,9 +40,13 @@ def _build_record(
     inventory_id: str,
     receiving_id: str,
     serial: str = "",
+    scanned_model: str = "",
 ) -> ReceivingRecord:
-    """Build a ReceivingRecord from match result; uses empty defaults for no-match.
+    """Build a ReceivingRecord from match result.
 
+    On no-match: model_number and serial are populated from the scanned input so
+    the NO_MATCH board item shows what failed to match (actionable for the team).
+    On match: model_number comes from the catalog row (best_model); serial from scan.
     brand, vendor, tags are carried from the matched po_inventory row so the
     label printer and downstream sink have the full catalog fields available.
     """
@@ -50,7 +54,7 @@ def _build_record(
         "truck": "",
         "stop": "",
         "sales_order": "",
-        "model_number": "",
+        "model_number": scanned_model,
         "product_category": "",
         "product_size": {"w": 0, "d": 0, "h": 0},
         "quantity": 1,
@@ -59,7 +63,7 @@ def _build_record(
         "match_status": "no_match",
         "purchase_order": po_number,
         "inventory_id": "",
-        "serial": "",
+        "serial": serial,
         "brand": "",
         "vendor": "",
         "tags": "",
@@ -117,7 +121,9 @@ def process_scan(
         repository.claim(inventory_id, datetime.now().isoformat())
 
     receiving_id = _make_receiving_id(po_number, inventory_id, barcode)
-    record = _build_record(matched, best_model, po_number, inventory_id, receiving_id, serial)
+    record = _build_record(
+        matched, best_model, po_number, inventory_id, receiving_id, serial, scanned_model=barcode
+    )
 
     repository.save_record(record)
 

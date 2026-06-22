@@ -73,7 +73,7 @@ def test_make_sink_graphql_returns_result_sink_adapter():
         base_url="http://x",
         api_token="t",
         board_id="b",
-        received_group_id="r",
+        ready_group_id="r",
         no_match_group_id="n",
         attention_group_id="a",
     )

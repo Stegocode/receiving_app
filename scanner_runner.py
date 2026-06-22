@@ -38,7 +38,7 @@ def build_app() -> ReceivingUI:
         base_url=config.SINK_BASE_URL,
         api_token=config.SINK_API_TOKEN,
         board_id=config.SINK_BOARD_ID,
-        received_group_id=config.SINK_RECEIVED_GROUP_ID,
+        ready_group_id=config.SINK_READY_GROUP_ID,
         no_match_group_id=config.SINK_NO_MATCH_GROUP_ID,
         attention_group_id=config.SINK_ATTENTION_GROUP_ID,
         inventory_id_col=config.SINK_INVENTORY_ID_COL,

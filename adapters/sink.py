@@ -38,7 +38,7 @@ class ResultSinkAdapter:
         base_url: str,
         api_token: str,
         board_id: str,
-        received_group_id: str,
+        ready_group_id: str,
         no_match_group_id: str,
         attention_group_id: str,
         inventory_id_col: str,
@@ -49,7 +49,7 @@ class ResultSinkAdapter:
         self._base_url = base_url
         self._token = api_token
         self._board_id = board_id
-        self._received_group_id = received_group_id
+        self._ready_group_id = ready_group_id
         self._no_match_group_id = no_match_group_id
         self._attention_group_id = attention_group_id
         self._inventory_id_col = inventory_id_col
@@ -127,7 +127,7 @@ class ResultSinkAdapter:
         """Create a board item for a completed receiving event.
 
         Idempotent on receiving_id — a repeat call is a silent no-op.
-        Dispatches to the received group (match_status='received') or the
+        Dispatches to the ready group (match_status='received') or the
         no-match group (all other statuses).
         """
         if record.receiving_id in self._seen:
@@ -147,7 +147,7 @@ class ResultSinkAdapter:
         )
 
         if record.match_status == "received":
-            self._create_item(self._received_group_id, record, "RECEIVED")
+            self._create_item(self._ready_group_id, record, "READY")
         else:
             self._create_item(self._no_match_group_id, record, "NO MATCH")
 
@@ -259,7 +259,7 @@ def make_sink(
     base_url: str = "",
     api_token: str = "",
     board_id: str = "",
-    received_group_id: str = "",
+    ready_group_id: str = "",
     no_match_group_id: str = "",
     attention_group_id: str = "",
     inventory_id_col: str = "",
@@ -278,7 +278,7 @@ def make_sink(
             base_url,
             api_token,
             board_id,
-            received_group_id,
+            ready_group_id,
             no_match_group_id,
             attention_group_id,
             inventory_id_col,

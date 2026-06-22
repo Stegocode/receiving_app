@@ -80,7 +80,8 @@ def test_process_scan_match() -> None:
 def test_process_scan_no_match() -> None:
     """No matching candidate → match_status='no_match', routed through emit, record saved.
 
-    All default fields asserted to kill _build_record default-value mutations.
+    model_number carries the scanned barcode; serial carries the scanned serial (empty here).
+    All other default fields asserted to kill _build_record default-value mutations.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -94,7 +95,7 @@ def test_process_scan_no_match() -> None:
     assert record.truck == ""
     assert record.stop == ""
     assert record.sales_order == ""
-    assert record.model_number == ""
+    assert record.model_number == "ZZZZZ-NOMATCH-999"
     assert record.product_category == ""
     assert record.product_size == {"w": 0, "d": 0, "h": 0}
     assert record.quantity == 1
@@ -264,6 +265,31 @@ def test_serial_not_set_defaults_to_empty_string() -> None:
     record = process_scan("MODEL-A", "PO-001", repo, sink)
 
     assert record.serial == ""
+
+
+def test_no_match_carries_scanned_model_and_serial() -> None:
+    """No-match record carries scanned model + serial so the board item is actionable.
+
+    Kills any mutation that leaves model_number or serial blank on the no-match path:
+      - model_number must equal the raw barcode input, not the empty default.
+      - serial must equal the scanned serial, not the empty default.
+    The emitted record in the fake sink must also carry both fields.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
+
+    record = process_scan("UNKNOWN-XYZ", "PO-001", repo, sink, serial="SN-NO-MATCH-99")
+
+    assert record.match_status == "no_match"
+    assert record.model_number == "UNKNOWN-XYZ", (
+        f"expected scanned barcode 'UNKNOWN-XYZ' but got {record.model_number!r}"
+    )
+    assert record.serial == "SN-NO-MATCH-99", (
+        f"expected scanned serial 'SN-NO-MATCH-99' but got {record.serial!r}"
+    )
+    assert sink.emitted[0].model_number == "UNKNOWN-XYZ"
+    assert sink.emitted[0].serial == "SN-NO-MATCH-99"
 
 
 def test_brand_vendor_tags_are_carried_from_matched_row() -> None:

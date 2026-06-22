@@ -50,7 +50,7 @@ def _make_adapter() -> ResultSinkAdapter:
         base_url="https://api.example.com/v2",
         api_token="tok",
         board_id="board123",
-        received_group_id="grp_recv",
+        ready_group_id="grp_ready",
         no_match_group_id="grp_nm",
         attention_group_id="grp_att",
         inventory_id_col="col_inv",
@@ -199,17 +199,30 @@ def test_adapter_emit_serial_empty_string_still_sent(monkeypatch):
 # ── ResultSinkAdapter — group routing ────────────────────────────────────────
 
 
-def test_adapter_emit_received_routes_to_received_group(monkeypatch):
+def test_adapter_emit_received_routes_to_ready_group(monkeypatch):
+    """A matched/received record must go to the READY group, not RECEIVED.
+
+    The robot polls READY; routing to RECEIVED would leave the robot queue empty.
+    Kills any mutation that routes match_status='received' to the received or
+    no-match group.
+    """
     adapter = _make_adapter()
     captured: dict = {}
 
     def fake_post(url, **kwargs):
-        captured["groupId"] = kwargs["json"]["variables"]["groupId"]
+        body = kwargs["json"]["variables"]
+        captured["groupId"] = body["groupId"]
+        captured["status"] = __import__("json").loads(body["columnValues"]).get("col_status", {})
         return _ok_response()
 
     monkeypatch.setattr("adapters.sink.requests.post", fake_post)
     adapter.emit(_make_record("rid-001", "received"))
-    assert captured["groupId"] == "grp_recv"
+    assert captured["groupId"] == "grp_ready", (
+        f"expected READY group 'grp_ready' but got '{captured['groupId']}'"
+    )
+    assert captured["status"] == {"label": "READY"}, (
+        f"expected status label 'READY' but got {captured['status']!r}"
+    )
 
 
 def test_adapter_emit_no_match_routes_to_no_match_group(monkeypatch):
