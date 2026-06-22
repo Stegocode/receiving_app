@@ -57,7 +57,7 @@ application — it will not create them for you.
 
 **Result sink / board** — connection details for the board where outcomes are posted.
 `SINK_BASE_URL` must be the **API endpoint URL**, not the board's web browser URL
-(e.g. `https://api.monday.com/v2`, not `https://monday.com/boards/12345`).
+(e.g. `https://api.your-board-provider.com/v2`, not `https://your-board-provider.com/boards/12345`).
 Using the web URL will cause 401 Unauthorized errors.
 
 | Setting | What it is |
@@ -504,7 +504,7 @@ to the board.
 
 **Check:**
 - `SINK_BASE_URL` must be the **API endpoint**, not the web board URL.
-  For example, `https://api.monday.com/v2` — not `https://monday.com/boards/12345`.
+  For example, `https://api.your-board-provider.com/v2` — not `https://your-board-provider.com/boards/12345`.
   The web URL will always return 401 when used as an API endpoint.
 - `SINK_API_TOKEN` must be a valid API token, not a user password.
 
