@@ -42,6 +42,7 @@ def build_app() -> ReceivingUI:
         attention_group_id=config.SINK_ATTENTION_GROUP_ID,
         inventory_id_col=config.SINK_INVENTORY_ID_COL,
         model_col=config.SINK_MODEL_COL,
+        serial_col=config.SINK_SERIAL_COL,
         status_col=config.SINK_STATUS_COL,
     )
     source = make_source(
@@ -54,7 +55,7 @@ def build_app() -> ReceivingUI:
     )
     printer = make_printer(config.PRINTER_TYPE)
     return ReceivingUI(
-        process=lambda barcode, po: process_scan(barcode, po, repo, sink),
+        process=lambda barcode, serial, po: process_scan(barcode, po, repo, sink, serial=serial),
         printer=printer,
         scanner_type=config.SCANNER_TYPE,
         populate=lambda po: populate_po(po, repo, source),

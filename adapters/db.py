@@ -91,6 +91,35 @@ class SQLiteRepository:
         except sqlite3.Error as exc:
             raise RepositoryError(f"get_purchase_order failed — {exc}") from exc
 
+    def unclaimed_for_po(self, po_number: str) -> list[dict]:
+        """Return po_inventory rows for the PO that have not yet been claimed."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "SELECT * FROM po_inventory WHERE purchase_order = ? AND claimed_at IS NULL",
+                    (po_number,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"unclaimed_for_po failed — {exc}") from exc
+
+    def claim(self, inventory_id: str, claimed_at: str) -> None:
+        """Atomically mark one po_inventory row as claimed.
+
+        The AND claimed_at IS NULL guard prevents double-claiming: if a concurrent
+        scan already claimed this row, rowcount == 0 and this call is a no-op.
+        """
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE po_inventory SET claimed_at = ? "
+                    "WHERE inventory_id = ? AND claimed_at IS NULL",
+                    (claimed_at, inventory_id),
+                )
+            _log.info("db_claim inventory_id=%s", inventory_id)
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"claim failed — {exc}") from exc
+
     def upsert_items(self, items: list[dict]) -> None:
         try:
             with self._connect() as conn:
@@ -138,9 +167,9 @@ class SQLiteRepository:
                     INSERT INTO receiving_items
                         (receiving_id, purchase_order, inventory_id, model_number,
                          product_category, truck, stop, sales_order, product_size,
-                         quantity, match_status, timestamp, emitted, created_at,
-                         updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)
+                         quantity, match_status, timestamp, serial,
+                         emitted, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)
                     ON CONFLICT(receiving_id) DO UPDATE SET
                         purchase_order   = excluded.purchase_order,
                         inventory_id     = excluded.inventory_id,
@@ -153,6 +182,7 @@ class SQLiteRepository:
                         quantity         = excluded.quantity,
                         match_status     = excluded.match_status,
                         timestamp        = excluded.timestamp,
+                        serial           = excluded.serial,
                         updated_at       = ?
                     """,
                     (
@@ -168,6 +198,7 @@ class SQLiteRepository:
                         record.quantity,
                         record.match_status,
                         record.timestamp,
+                        record.serial,
                         now,  # created_at (new rows only)
                         now,  # updated_at in DO UPDATE
                     ),

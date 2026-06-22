@@ -28,17 +28,20 @@ class ScanOutcome:
 
 def handle_scan(
     barcode: str,
+    serial: str,
     po_number: str,
-    process: Callable[[str, str], ReceivingRecord],
+    process: Callable[[str, str, str], ReceivingRecord],
     printer: Printer,
 ) -> ScanOutcome:
     """Process one barcode scan and print a label if the record matched.
 
-    process is injected (adapters must not import services directly).
+    process(barcode, serial, po_number) is injected (adapters must not import
+    services directly). serial is the second scan (serial number barcode); pass
+    empty string when running in single-scan mode.
     PrinterError is caught and surfaced as status "print_failed" — the record
     is already saved and can be re-printed without re-scanning.
     """
-    record = process(barcode, po_number)
+    record = process(barcode, serial, po_number)
     if record.match_status != "received":
         return ScanOutcome("no_match", record)
     try:

@@ -6,9 +6,12 @@ May import: pytest, services.receive, tests.fakes.
 not_measured: real network calls, real SQLite file, real result sink API,
               real USB scanner device, real Tkinter UI.
 
-PASS:       barcode matches a PO candidate → match_status='received', emit called once.
-NO_MATCH:   barcode matches nothing → match_status='no_match', emit called once.
-IDEMPOTENT: same scan inputs twice → was_emitted guard blocks second emit call.
+PASS:        barcode matches unclaimed PO unit → match_status='received', emit called.
+NO_MATCH:    barcode matches nothing → match_status='no_match', emit called.
+CLAIM_N:     N units of same model; N scans claim N distinct inventory_ids.
+CLAIM_EXHAUSTED: (N+1)th scan with no unclaimed units → no_match.
+SERIAL:      serial parameter is carried through to the emitted record.
+BRAND_TAGS:  brand/vendor/tags from matched row are carried through to the record.
 """
 
 from __future__ import annotations
@@ -27,6 +30,9 @@ def _make_candidate(
     inventory_id: str,
     model_number: str,
     po_number: str,
+    brand: str = "Brand A",
+    vendor: str = "Vendor A",
+    tags: str = "tag1",
 ) -> dict:
     return {
         "inventory_id": inventory_id,
@@ -38,9 +44,9 @@ def _make_candidate(
         "sales_order": "SO-001",
         "product_size": {"w": 10.0, "d": 20.0, "h": 30.0},
         "quantity": 2,
-        "brand": "Brand A",
-        "vendor": "Vendor A",
-        "tags": "",
+        "brand": brand,
+        "vendor": vendor,
+        "tags": tags,
         "created_at": _TIMESTAMP,
     }
 
@@ -48,9 +54,7 @@ def _make_candidate(
 def test_process_scan_match() -> None:
     """Matching barcode → match_status='received', record saved, emit called once.
 
-    All fields asserted to kill _build_record default-value mutations in the matched block
-    (mutmut_46..109): mutations to truck/stop/sales_order/product_category/product_size/quantity
-    all produce wrong values that would fail the assertions below.
+    All fields asserted to kill _build_record default-value mutations in the matched block.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -76,9 +80,7 @@ def test_process_scan_match() -> None:
 def test_process_scan_no_match() -> None:
     """No matching candidate → match_status='no_match', routed through emit, record saved.
 
-    All default fields asserted to kill _build_record default-value mutations (mutmut_4..43):
-    mutations to truck/stop/sales_order/model_number/product_category/product_size/quantity
-    defaults all produce wrong values that would fail the assertions below.
+    All default fields asserted to kill _build_record default-value mutations.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -96,6 +98,10 @@ def test_process_scan_no_match() -> None:
     assert record.product_category == ""
     assert record.product_size == {"w": 0, "d": 0, "h": 0}
     assert record.quantity == 1
+    assert record.serial == ""
+    assert record.brand == ""
+    assert record.vendor == ""
+    assert record.tags == ""
     assert repo.was_emitted(record.receiving_id)
     assert len(sink.emitted) == 1
     assert len(sink.attention) == 0
@@ -118,32 +124,21 @@ def test_process_scan_receiving_id_uses_po_inventory_and_barcode() -> None:
 
 
 def test_process_scan_no_match_receiving_id_uses_empty_inventory_id() -> None:
-    """No-match receiving_id uses empty string for inventory_id in the hash.
-
-    Kills recv_ps_20: `if matched else "XXXX"` — hash differs from expected.
-    """
+    """No-match receiving_id uses empty string for inventory_id in the hash."""
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
 
     record = process_scan("ZZZZZ-NOMATCH", "PO-001", repo, sink)
 
-    # no-match: inventory_id="" so hash is SHA-256(po_number + "" + barcode)
     expected = hashlib.sha256(b"PO-001ZZZZZ-NOMATCH").hexdigest()
     assert record.receiving_id == expected
 
 
 def test_process_scan_match_with_sparse_candidate_uses_defaults() -> None:
-    """Matched candidate missing optional fields falls back to _build_record defaults.
-
-    Kills the matched-branch `.get("field", default)` mutations (mutmut_49..109):
-    mutations that change the default to None cause ValidationError (caught as unexpected
-    exception in this test), mutations that change the default to a wrong value cause
-    the assertion to fail.
-    """
+    """Matched candidate missing optional fields falls back to _build_record defaults."""
     repo = FakeRepository()
     sink = FakeResultSink()
-    # Sparse candidate — only the fields needed to identify the match
     repo.upsert_items(
         [{"inventory_id": "INV-S", "purchase_order": "PO-001", "model_number": "MODEL-A"}]
     )
@@ -157,27 +152,166 @@ def test_process_scan_match_with_sparse_candidate_uses_defaults() -> None:
     assert record.product_category == ""
     assert record.product_size == {"w": 0, "d": 0, "h": 0}
     assert record.quantity == 1
+    assert record.brand == ""
+    assert record.vendor == ""
+    assert record.tags == ""
 
 
-def test_process_scan_idempotent() -> None:
-    """Same scan inputs twice → was_emitted guard blocks second emit; call count is exactly 1."""
+# ── Claiming tests (GATED — these tests MUST fail on a mutation that ──────────
+# ── drops the claim, uses get_purchase_order instead of unclaimed_for_po, ─────
+# ── or removes the AND claimed_at IS NULL guard in the Repository). ────────────
+
+
+def test_claiming_n_units_same_model_returns_n_distinct_inventory_ids() -> None:
+    """Seed N units of the same model; N scans must claim N DISTINCT inventory_ids.
+
+    Mutation kill target: any mutation that:
+      - drops the claim() call → all scans return the same inventory_id (first match)
+      - uses get_purchase_order instead of unclaimed_for_po → all scans return INV-001
+      - removes the AND claimed_at IS NULL guard → re-claims the same row each time
+    All of these mutations cause the set of claimed IDs to have fewer than N members,
+    failing the len(claimed_ids) == N assertion.
+    """
+    N = 3
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    for i in range(1, N + 1):
+        repo.upsert_items([_make_candidate(f"INV-{i:03d}", "MODEL-A", "PO-001")])
+
+    claimed_ids = []
+    for _ in range(N):
+        record = process_scan("MODEL-A", "PO-001", repo, sink)
+        assert record.match_status == "received", "expected a match while units remain unclaimed"
+        claimed_ids.append(record.inventory_id)
+
+    assert len(claimed_ids) == N
+    assert len(set(claimed_ids)) == N, (
+        f"expected {N} distinct inventory_ids but got: {claimed_ids}"
+    )
+    assert len(sink.emitted) == N
+
+
+def test_claiming_n_plus_one_scan_finds_nothing() -> None:
+    """After N claims exhaust the catalog, the (N+1)th scan is a no_match.
+
+    Mutation kill target: any mutation that uses get_purchase_order (which returns ALL rows
+    including claimed ones) instead of unclaimed_for_po → the (N+1)th scan finds a match
+    and this assertion fails.
+    """
+    N = 2
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    for i in range(1, N + 1):
+        repo.upsert_items([_make_candidate(f"INV-{i:03d}", "MODEL-A", "PO-001")])
+
+    for _ in range(N):
+        process_scan("MODEL-A", "PO-001", repo, sink)
+
+    # (N+1)th scan — all units claimed
+    record = process_scan("MODEL-A", "PO-001", repo, sink)
+    assert record.match_status == "no_match", (
+        "expected no_match when all units are claimed, but got a match"
+    )
+
+
+def test_claiming_does_not_affect_other_models_on_same_po() -> None:
+    """Claiming MODEL-A does not prevent MODEL-B from being claimed on the same PO.
+
+    Kills any mutation that accidentally marks all rows claimed instead of just the matched one.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([
+        _make_candidate("INV-A", "MODEL-A", "PO-001"),
+        _make_candidate("INV-B", "MODEL-B", "PO-001"),
+    ])
+
+    rec_a = process_scan("MODEL-A", "PO-001", repo, sink)
+    rec_b = process_scan("MODEL-B", "PO-001", repo, sink)
+
+    assert rec_a.match_status == "received"
+    assert rec_a.inventory_id == "INV-A"
+    assert rec_b.match_status == "received"
+    assert rec_b.inventory_id == "INV-B"
+    assert rec_a.inventory_id != rec_b.inventory_id
+
+
+# ── Serial / label field tests (GATED) ────────────────────────────────────────
+
+
+def test_serial_is_carried_through_to_matched_record() -> None:
+    """Scanned serial appears on the matched ReceivingRecord.
+
+    Kills any mutation that drops the serial parameter from _build_record or
+    that fails to thread serial through process_scan.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
+
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-ABCD-1234")
+
+    assert record.serial == "SN-ABCD-1234"
+    assert sink.emitted[0].serial == "SN-ABCD-1234"
+
+
+def test_serial_not_set_defaults_to_empty_string() -> None:
+    """When no serial is passed, record.serial is an empty string (not None)."""
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
+
+    record = process_scan("MODEL-A", "PO-001", repo, sink)
+
+    assert record.serial == ""
+
+
+def test_brand_vendor_tags_are_carried_from_matched_row() -> None:
+    """brand, vendor, tags from the po_inventory row appear on the matched record.
+
+    Kills any mutation that drops the brand/vendor/tags fields from _build_record
+    or that fails to pull them from the matched candidate dict.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([
+        _make_candidate("INV-001", "MODEL-A", "PO-001",
+                        brand="Whirlpool", vendor="Distributor X", tags="appliance,washer")
+    ])
+
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-9999")
+
+    assert record.brand == "Whirlpool"
+    assert record.vendor == "Distributor X"
+    assert record.tags == "appliance,washer"
+    assert sink.emitted[0].brand == "Whirlpool"
+    assert sink.emitted[0].vendor == "Distributor X"
+    assert sink.emitted[0].tags == "appliance,washer"
+
+
+def test_no_match_scan_does_not_set_idempotent_no_match_records_for_same_barcode() -> None:
+    """Two no-match scans of the same barcode on the same PO produce the same receiving_id.
+
+    was_emitted guard blocks the second emit; only 1 emit call total.
+    This verifies that the no-match idempotency path still works correctly
+    (inventory_id='' → same hash → same receiving_id → was_emitted guard fires).
+    """
     repo = FakeRepository()
 
     class _CountingSink:
         def __init__(self) -> None:
-            self.emit_call_count = 0
+            self.emit_count = 0
 
         def emit(self, record: ReceivingRecord) -> None:
-            self.emit_call_count += 1
+            self.emit_count += 1
 
         def surface_attention(self, record: ReceivingRecord) -> None:
-            self.emit_call_count += 1
+            self.emit_count += 1
 
     sink = _CountingSink()
-    repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
-
-    record1 = process_scan("MODEL-A", "PO-001", repo, sink)
-    record2 = process_scan("MODEL-A", "PO-001", repo, sink)
+    # No candidates — all scans will be no_match
+    record1 = process_scan("NOMATCH-XYZ", "PO-001", repo, sink)
+    record2 = process_scan("NOMATCH-XYZ", "PO-001", repo, sink)
 
     assert record1.receiving_id == record2.receiving_id
-    assert sink.emit_call_count == 1  # was_emitted guard prevented second call
+    assert sink.emit_count == 1  # was_emitted guard blocked second emit

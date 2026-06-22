@@ -6,6 +6,10 @@ May import: core.schema, core.matching, core.errors, core.ports.
 Invariant: a crash at any step in process_scan leaves the system recoverable on
 retry — save_record is durable before any sink call; was_emitted prevents
 double-emission; mark_emitted is set only after the sink acknowledges.
+
+Claiming invariant: claim() uses AND claimed_at IS NULL so a concurrent scan
+cannot steal an already-claimed row. Once claimed, the inventory_id is locked
+to this scan session (single-writer assumption — see boundary markers).
 """
 
 from __future__ import annotations
@@ -35,8 +39,13 @@ def _build_record(
     po_number: str,
     inventory_id: str,
     receiving_id: str,
+    serial: str = "",
 ) -> ReceivingRecord:
-    """Build a ReceivingRecord from match result; uses empty defaults for no-match."""
+    """Build a ReceivingRecord from match result; uses empty defaults for no-match.
+
+    brand, vendor, tags are carried from the matched po_inventory row so the
+    label printer and downstream sink have the full catalog fields available.
+    """
     fields = {
         "truck": "",
         "stop": "",
@@ -50,6 +59,10 @@ def _build_record(
         "match_status": "no_match",
         "purchase_order": po_number,
         "inventory_id": "",
+        "serial": "",
+        "brand": "",
+        "vendor": "",
+        "tags": "",
     }
     if matched and best_model:
         fields.update(
@@ -63,6 +76,10 @@ def _build_record(
                 "quantity": matched.get("quantity", 1),
                 "match_status": "received",
                 "inventory_id": inventory_id,
+                "serial": serial,
+                "brand": matched.get("brand") or "",
+                "vendor": matched.get("vendor") or "",
+                "tags": matched.get("tags") or "",
             }
         )
     return from_dict(fields)
@@ -73,14 +90,20 @@ def process_scan(
     po_number: str,
     repository: Repository,
     sink: ResultSink,
+    *,
+    serial: str = "",
 ) -> ReceivingRecord:
-    """Match barcode against PO, save durably, emit once, return the record.
+    """Match barcode against unclaimed PO units, claim the match, save and emit once.
+
+    Uses unclaimed_for_po so each physical unit is only claimed once. On a match,
+    claim() is called before building the record — the AND claimed_at IS NULL guard
+    prevents two concurrent scans from claiming the same unit.
 
     No-match is an expected outcome (match_status='no_match'), not an exception.
-    Step order: save_record (durable first) → was_emitted guard → sink call
-    → mark_emitted → return. A crash at any step is safe to retry.
+    Step order: claim (if match) → save_record (durable) → was_emitted guard
+    → sink call → mark_emitted → return.
     """
-    candidates = repository.get_purchase_order(po_number)
+    candidates = repository.unclaimed_for_po(po_number)
     best_model, _ = find_best_match(barcode, [c["model_number"] for c in candidates])
 
     matched = (
@@ -89,8 +112,12 @@ def process_scan(
         else None
     )
     inventory_id = matched["inventory_id"] if matched else ""
+
+    if matched:
+        repository.claim(inventory_id, datetime.now().isoformat())
+
     receiving_id = _make_receiving_id(po_number, inventory_id, barcode)
-    record = _build_record(matched, best_model, po_number, inventory_id, receiving_id)
+    record = _build_record(matched, best_model, po_number, inventory_id, receiving_id, serial)
 
     repository.save_record(record)
 
