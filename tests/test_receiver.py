@@ -36,7 +36,7 @@ def _make_portal_receiver(tmp_path: Path) -> PortalReceiver:
         username="test_user",
         password="test_pass",
         location_label="TEST WAREHOUSE",
-        whse_label="REC-ST-01",
+        whse_label="TEST-WHSE-01",
         screenshot_dir=tmp_path / "screenshots",
         headless=True,
     )
