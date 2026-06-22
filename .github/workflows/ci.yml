@@ -46,7 +46,51 @@ jobs:
         run: python scripts/conformance.py
 
       - name: pytest
-        run: pytest
+        # Adapters excluded from the failing gate by design — they are the live-hardening
+        # surface tracked in DEBT.md. Only core+services+config must meet the 95% bar.
+        run: pytest --cov=core --cov=services --cov=config --cov-report=term-missing --cov-fail-under=95
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run mutation tests
+        # Scoped to core/ and services/ via [tool.mutmut] source_paths in pyproject.toml.
+        # Survivors are expected (116 accepted equivalents — see MUTATION.md).
+        run: mutmut run || true
+
+      - name: Check mutation score
+        # Gate: score must stay >= 78% (achieved 82.4% at T-16; threshold is 4 pts below).
+        run: |
+          python3 - <<'EOF'
+          import json, glob, sys
+          total = killed = 0
+          for f in glob.glob("mutants/**/*.meta", recursive=True):
+              data = json.load(open(f))
+              for code in data.get("exit_code_by_key", {}).values():
+                  total += 1
+                  if code != 0:
+                      killed += 1
+          score = killed / total * 100 if total else 0.0
+          threshold = 78
+          print(f"Mutation score: {killed}/{total} = {score:.1f}% (threshold {threshold}%)")
+          if score < threshold:
+              print(f"FAIL: score {score:.1f}% is below threshold {threshold}%")
+              sys.exit(1)
+          EOF
+
+      - name: Show mutation results
+        if: always()
+        run: mutmut results
 
   secrets:
     runs-on: ubuntu-latest

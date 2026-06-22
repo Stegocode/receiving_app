@@ -33,9 +33,14 @@ def test_schema_version_is_positive_integer():
 
 
 def test_validate_empty_dict_returns_problems():
-    # All 12 fields missing — must report at least one problem per field
+    # All 12 fields missing — must report at least one problem per field.
+    # Exact membership checks kill mutations that replace problem strings with
+    # None (mutmut_5, 38, 53) or garbled text (mutmut_39, 40, 54, 55).
     problems = validate_record({})
     assert len(problems) > 0
+    assert "truck: missing required field" in problems
+    assert "quantity: missing required field" in problems
+    assert "product_size: missing required field" in problems
 
 
 def test_validate_valid_record_returns_empty():
@@ -66,10 +71,80 @@ def test_validate_quantity_zero():
 
 
 def test_from_dict_raises_validation_error_on_bad_data():
-    with pytest.raises(ValidationError):
+    # match= kills mutmut_5 (ValidationError(None)) and case-mutation survivors.
+    with pytest.raises(ValidationError, match="Record failed validation"):
         from_dict({})
 
 
 def test_validate_invalid_timestamp():
     problems = validate_record({**_VALID, "timestamp": "not-a-date"})
     assert any("timestamp" in p for p in problems)
+
+
+def test_validate_string_field_wrong_type():
+    # L61: str field contains a non-str value — must report type error with actual type.
+    # `and "int" in p` kills mutmut_8: replaces `type(data[field]).__name__`
+    # with `type(None).__name__` ("NoneType" doesn't contain "int").
+    problems = validate_record({**_VALID, "purchase_order": 999})
+    assert any("purchase_order" in p and "str" in p for p in problems)
+    assert any("int" in p for p in problems)
+
+
+def test_validate_receiving_id_empty():
+    # L63: receiving_id is whitespace-only — must report non-empty violation.
+    # Exact membership check kills mutmut_15: "XXreceiving_id: must be non-emptyXX"
+    # is not equal to the correct string, so `in problems` (list membership) fails.
+    problems = validate_record({**_VALID, "receiving_id": "  "})
+    assert "receiving_id: must be non-empty" in problems
+
+
+def test_validate_quantity_wrong_type():
+    # L81: quantity is a float, not an int — must report type error with "float".
+    # `and "float" in p` kills mutmut_44: replaces type name with "NoneType".
+    problems = validate_record({**_VALID, "quantity": 2.5})
+    assert any("quantity" in p for p in problems)
+    assert any("float" in p for p in problems)
+
+
+def test_validate_quantity_bool_rejected():
+    # L81: bool is a subclass of int — must be treated as wrong type, not int.
+    # `and "bool" in p` kills mutmut_44 via the bool path.
+    problems = validate_record({**_VALID, "quantity": True})
+    assert any("quantity" in p for p in problems)
+    assert any("bool" in p for p in problems)
+
+
+def test_validate_product_size_not_dict():
+    # L89: product_size is a string, not a dict — must report type error with "str".
+    # `and "str" in p` kills mutmut_58: replaces type name with "NoneType".
+    problems = validate_record({**_VALID, "product_size": "big"})
+    assert any("product_size" in p and "str" in p for p in problems)
+
+
+def test_validate_product_size_missing_key():
+    # L93: product_size dict is missing a required dimension key
+    problems = validate_record({**_VALID, "product_size": {"w": 1.0, "d": 2.0}})
+    assert any("product_size" in p and "missing key" in p for p in problems)
+
+
+def test_validate_product_size_wrong_value_type():
+    # L95: product_size dimension value is a string, not numeric.
+    # `and "str" in p` kills mutmut_70: replaces type name with "NoneType".
+    problems = validate_record({**_VALID, "product_size": {"w": "wide", "d": 2.0, "h": 3.0}})
+    assert any("product_size" in p and "numeric" in p for p in problems)
+    assert any("str" in p for p in problems)
+
+
+def test_from_dict_error_message_format():
+    """ValidationError message starts with the expected header and uses plain newline separation.
+
+    Kills mutmut_7: prefix "XXRecord failed validation:\\nXX" — message would not start
+    with "Record failed validation".
+    Kills mutmut_11: "XX\\nXX".join(problems) — message would contain literal "XX".
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        from_dict({**_VALID, "truck": 123, "stop": None})
+    msg = str(exc_info.value)
+    assert msg.startswith("Record failed validation:\n")
+    assert "\n  " in msg  # problems are indented with two spaces after newline
+    assert "XX" not in msg  # guards against garbled join separator

@@ -21,6 +21,8 @@ dev = [
     "mypy>=1.10",
     "import-linter>=2.1",
     "pytest>=8",
+    "pytest-cov>=5",
+    "mutmut>=3.6",
     "pre-commit>=3.7",
 ]
 
@@ -50,6 +52,36 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "scripts"]
+
+[tool.coverage.run]
+source = ["core", "services", "config"]
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+    "__main__.py",
+    "adapters/ui/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mutmut]
+# Mutate only core/ and services/ — adapters are live-only, low value to mutate.
+source_paths = ["core", "services"]
+# Copy everything tests need to run inside the mutants/ sandbox.
+also_copy = ["adapters", "config.py", "scripts"]
+# Run only the tests that exercise core/services logic; adapter integration tests
+# are excluded here because they need real infrastructure and would all fail anyway.
+pytest_add_cli_args_test_selection = [
+    "tests/test_schema.py",
+    "tests/test_matching.py",
+    "tests/test_logging_setup.py",
+    "tests/test_sync.py",
+    "tests/test_receive.py",
+    "tests/test_receive_sync.py",
+    "tests/test_populate.py",
+    "tests/test_refresh.py",
+]
 
 [tool.importlinter]
 root_packages = ["core", "services", "adapters"]
