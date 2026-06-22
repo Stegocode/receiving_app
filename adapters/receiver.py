@@ -1,7 +1,7 @@
 # Owns: PortalReceiver, FakeReceiver, make_receiver().
-# Must not: import core.ports directly; must not import services or other adapters;
-#           must not read environment variables directly.
-# May import: core.errors, core.matching, playwright, logging, time, pathlib.
+# Must not: import services or other adapters; must not read environment variables directly.
+# May import: core.errors, core.matching, core.ports (ReceiveOutcome),
+#             playwright, logging, time, pathlib.
 #
 # PortalReceiver is PORTED but live-untested — see DEBT.md [DEBT-T13-001].
 
@@ -11,6 +11,7 @@ import logging
 import time
 from contextlib import suppress
 from pathlib import Path
+from typing import cast
 
 from playwright.sync_api import (
     Browser,
@@ -23,6 +24,7 @@ from playwright.sync_api import (
 
 from core.errors import ExecutorError
 from core.matching import match_score, normalize
+from core.ports import ReceiveOutcome
 
 _log = logging.getLogger(__name__)
 
@@ -132,18 +134,14 @@ class PortalReceiver:
     def _ensure_session(self) -> Page:
         if self._page is not None:
             return self._page
-        pw = sync_playwright().start()
-        self._pw = pw
+        self._pw = sync_playwright().start()
         try:
-            browser = pw.chromium.launch(headless=self._headless)
-            self._browser = browser
-            ctx = browser.new_context(
+            self._browser = self._pw.chromium.launch(headless=self._headless)
+            self._context = self._browser.new_context(
                 user_agent=_USER_AGENT, viewport={"width": 1920, "height": 1080}
             )
-            self._context = ctx
-            page = ctx.new_page()
-            self._page = page
-            self._login(page)
+            self._page = self._context.new_page()
+            self._login(self._page)
         except Exception:
             self.close()
             raise
@@ -199,7 +197,9 @@ class PortalReceiver:
             time.sleep(_GRID_PAGE_SETTLE_SECS)
         return None
 
-    def _step1_navigate(self, page: Page, po_number: str, inventory_id: str) -> str | None:
+    def _step1_navigate(
+        self, page: Page, po_number: str, inventory_id: str
+    ) -> ReceiveOutcome | None:
         page.goto(f"{self._base_url}/purchase-orders?id={po_number}")
         page.wait_for_load_state("networkidle")
         time.sleep(_NAV_SETTLE_SECS)
@@ -255,7 +255,7 @@ class PortalReceiver:
 
     def _step4_find_row(
         self, page: Page, po_number: str, inventory_id: str, model: str
-    ) -> str | None:
+    ) -> ReceiveOutcome | None:
         _log.info("step4.search", extra={"po": po_number, "model": model, "inv": inventory_id})
         self._screenshot(page, "04a_grid_before_search", inventory_id)
         row = self._find_model_row(page, model)
@@ -275,7 +275,9 @@ class PortalReceiver:
         self._screenshot(page, "04_qty_set", inventory_id)
         return None
 
-    def _step6_enter_serial(self, page: Page, inventory_id: str, serial: str) -> str | None:
+    def _step6_enter_serial(
+        self, page: Page, inventory_id: str, serial: str
+    ) -> ReceiveOutcome | None:
         serial_input = page.query_selector("input.brand-serial-input")
         if serial_input is None:
             _log.warning("step6.no_serial_input", extra={"inv": inventory_id})
@@ -285,7 +287,7 @@ class PortalReceiver:
         self._screenshot(page, "06_serial_entered", inventory_id)
         return None
 
-    def _step8_finalize(self, page: Page, inventory_id: str) -> str:
+    def _step8_finalize(self, page: Page, inventory_id: str) -> ReceiveOutcome:
         page.click("a[href='#finish']")
         time.sleep(_FINALIZE_SETTLE_SECS)
         self._screenshot(page, "08_finalized", inventory_id)
@@ -301,7 +303,7 @@ class PortalReceiver:
 
     def _run_wizard(
         self, page: Page, po_number: str, inventory_id: str, model: str, serial: str
-    ) -> str:
+    ) -> ReceiveOutcome:
         outcome = self._step1_navigate(page, po_number, inventory_id)
         if outcome is not None:
             return outcome
@@ -321,7 +323,9 @@ class PortalReceiver:
         self._screenshot(page, "07_review_page", inventory_id)
         return self._step8_finalize(page, inventory_id)
 
-    def receive_item(self, po_number: str, inventory_id: str, model: str, serial: str) -> str:
+    def receive_item(
+        self, po_number: str, inventory_id: str, model: str, serial: str
+    ) -> ReceiveOutcome:
         """Run the portal receiving wizard; return "received", "not_found", or "finalize_error"."""
         t0 = time.monotonic()
         _log.info("receiver.item.start", extra={"po": po_number, "inv": inventory_id})
@@ -329,10 +333,7 @@ class PortalReceiver:
             page = self._ensure_session()
             outcome = self._run_wizard(page, po_number, inventory_id, model, serial)
             dur_ms = int((time.monotonic() - t0) * 1000)
-            _log.info(
-                "receiver.item.done",
-                extra={"inv": inventory_id, "outcome": outcome, "ms": dur_ms},
-            )
+            _log.info("receiver.item.done inv=%s outcome=%s ms=%d", inventory_id, outcome, dur_ms)
             return outcome
         except ExecutorError:
             raise
@@ -346,21 +347,23 @@ class FakeReceiver:
     """In-memory ReceivingExecutor; outcomes keyed by inventory_id; "raise" → ExecutorError."""
 
     def __init__(
-        self, outcomes: dict[str, str] | None = None, default_outcome: str = "received"
+        self, outcomes: dict[str, str] | None = None, default_outcome: ReceiveOutcome = "received"
     ) -> None:
         self.outcomes: dict[str, str] = dict(outcomes or {})
-        self.default_outcome = default_outcome
+        self.default_outcome: ReceiveOutcome = default_outcome
         self.calls: list[tuple[str, str, str, str]] = []
         self.closed = False
 
-    def receive_item(self, po_number: str, inventory_id: str, model: str, serial: str) -> str:
+    def receive_item(
+        self, po_number: str, inventory_id: str, model: str, serial: str
+    ) -> ReceiveOutcome:
         self.calls.append((po_number, inventory_id, model, serial))
         configured = self.outcomes.get(inventory_id)
         if configured is None:
             return self.default_outcome
         if configured == "raise":
             raise ExecutorError(f"FakeReceiver configured to raise for inv={inventory_id!r}")
-        return configured
+        return cast(ReceiveOutcome, configured)
 
     def close(self) -> None:
         self.closed = True
@@ -376,7 +379,7 @@ def make_receiver(
     screenshot_dir: Path | None = None,
     headless: bool = True,
     outcomes: dict[str, str] | None = None,
-    default_outcome: str = "received",
+    default_outcome: ReceiveOutcome = "received",
 ) -> PortalReceiver | FakeReceiver:
     """Construct a ReceivingExecutor. Raises ExecutorError for unknown types (portal, fake)."""
     if receiver_type == "fake":

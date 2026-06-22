@@ -100,11 +100,22 @@ def _read_board_columns(problems: list[str]) -> tuple[str, str, str, str]:
 
 
 def _read_receiver_config(problems: list[str]) -> tuple[str, str, str, str]:
-    """Read RECEIVER_TYPE (choice) and the three optional RECEIVE_* vars."""
+    """Read RECEIVER_TYPE (choice) and the RECEIVE_* vars.
+
+    RECEIVE_LOCATION and RECEIVE_WHSE_LOCATION are required when RECEIVER_TYPE=portal;
+    optional when RECEIVER_TYPE=fake.
+    """
+    receiver_type = _validate_choice("RECEIVER_TYPE", "portal", {"portal", "fake"}, problems)
+    if receiver_type == "portal":
+        receive_location = _require("RECEIVE_LOCATION", problems)
+        receive_whse_location = _require("RECEIVE_WHSE_LOCATION", problems)
+    else:
+        receive_location = _read_optional_str("RECEIVE_LOCATION", "")
+        receive_whse_location = _read_optional_str("RECEIVE_WHSE_LOCATION", "")
     return (
-        _validate_choice("RECEIVER_TYPE", "portal", {"portal", "fake"}, problems),
-        _read_optional_str("RECEIVE_LOCATION", ""),
-        _read_optional_str("RECEIVE_WHSE_LOCATION", ""),
+        receiver_type,
+        receive_location,
+        receive_whse_location,
         _read_optional_str("RECEIVE_SCREENSHOT_DIR", ""),
     )
 

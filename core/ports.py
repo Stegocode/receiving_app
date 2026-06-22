@@ -7,9 +7,11 @@ May import: stdlib (typing, collections.abc), core.schema.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from core.schema import ReceivingRecord
+
+ReceiveOutcome = Literal["received", "not_found", "finalize_error"]
 
 
 @runtime_checkable
@@ -91,7 +93,9 @@ class ReceivingExecutor(Protocol):
     close() releases the browser session. Safe to call when no session was started.
     """
 
-    def receive_item(self, po_number: str, inventory_id: str, model: str, serial: str) -> str: ...
+    def receive_item(
+        self, po_number: str, inventory_id: str, model: str, serial: str
+    ) -> ReceiveOutcome: ...
 
     def close(self) -> None: ...
 

@@ -100,6 +100,15 @@ the live portal before relying on PortalReceiver in production:
 Trigger: before the orchestrator (T-14) is run against the live board and portal;
 run with real credentials and RECEIVE_LOCATION / RECEIVE_WHSE_LOCATION in a local .env.
 
+[DEBT-T14-001] 2026-06-21 — receive_sync is unit-tested with fakes; integrated robot is live-untested.
+services/receive_sync.py is fully covered by FakeBoard + FakeReceiver. The integrated robot
+(real ReceivingBoard + real PortalReceiver + live portal + live board) has never been run end-to-end.
+Additionally: RECEIVE_KILL_THRESHOLD (0.5) and MIN_ATTEMPTS_BEFORE_KILL (5) are untuned guesses —
+validate and tune against real failure patterns on the first live run.
+DB reconciliation (cleaning up RECEIVED rows from the local SQLite store after a successful portal
+receive) is also deferred — currently out of scope for the orchestrator.
+Trigger: first live run of the full receiving robot with real credentials and a populated READY group.
+
 [DEBT-T09-001] 2026-06-19 — `adapters/sink.py` is PORTED but live-untested.
 CI has no real API token, no live board, and no real group IDs. The entire API
 pipeline is mocked in tests. Validate the following against the live board before

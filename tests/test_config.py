@@ -61,6 +61,7 @@ _VALID_ENV = {
     "SINK_SERIAL_COL": "col_serial",
     "SINK_STATUS_COL": "col_status",
     "POLL_INTERVAL_SECS": "10",
+    "RECEIVER_TYPE": "fake",
 }
 
 
@@ -73,6 +74,10 @@ def _reload(monkeypatch, env: dict):
         "SOURCE_TYPE",
         "SINK_TYPE",
         "FAKE_SOURCE_DATA",
+        "RECEIVER_TYPE",
+        "RECEIVE_LOCATION",
+        "RECEIVE_WHSE_LOCATION",
+        "RECEIVE_SCREENSHOT_DIR",
     ]
     for var in _REQUIRED_VARS + _OPTIONAL_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -275,6 +280,46 @@ def test_board_column_id_blank_raises(monkeypatch):
     with pytest.raises(ConfigError) as exc:
         cfg.validate(dotenv_path=None)
     assert "SINK_STATUS_COL" in str(exc.value)
+
+
+def test_receiver_type_portal_requires_receive_location(monkeypatch):
+    """RECEIVER_TYPE=portal without RECEIVE_LOCATION — ConfigError names the missing var."""
+    env = {**_VALID_ENV, "RECEIVER_TYPE": "portal", "RECEIVE_WHSE_LOCATION": "WHSE-01"}
+    cfg = _reload(monkeypatch, env)
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "RECEIVE_LOCATION" in str(exc.value)
+
+
+def test_receiver_type_portal_requires_receive_whse_location(monkeypatch):
+    """RECEIVER_TYPE=portal without RECEIVE_WHSE_LOCATION — ConfigError names the missing var."""
+    env = {**_VALID_ENV, "RECEIVER_TYPE": "portal", "RECEIVE_LOCATION": "MAIN-WH"}
+    cfg = _reload(monkeypatch, env)
+    with pytest.raises(ConfigError) as exc:
+        cfg.validate(dotenv_path=None)
+    assert "RECEIVE_WHSE_LOCATION" in str(exc.value)
+
+
+def test_receiver_type_portal_with_locations_valid(monkeypatch):
+    """RECEIVER_TYPE=portal + both location vars set — validate() succeeds."""
+    env = {
+        **_VALID_ENV,
+        "RECEIVER_TYPE": "portal",
+        "RECEIVE_LOCATION": "MAIN-WH",
+        "RECEIVE_WHSE_LOCATION": "WHSE-01",
+    }
+    cfg = _reload(monkeypatch, env)
+    cfg.validate(dotenv_path=None)
+    assert cfg.RECEIVER_TYPE == "portal"
+    assert cfg.RECEIVE_LOCATION == "MAIN-WH"
+    assert cfg.RECEIVE_WHSE_LOCATION == "WHSE-01"
+
+
+def test_receiver_type_fake_does_not_require_location(monkeypatch):
+    """RECEIVER_TYPE=fake — RECEIVE_LOCATION and RECEIVE_WHSE_LOCATION remain optional."""
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "RECEIVER_TYPE": "fake"})
+    cfg.validate(dotenv_path=None)
+    assert cfg.RECEIVER_TYPE == "fake"
 
 
 def test_startup_gate(monkeypatch, tmp_path):
