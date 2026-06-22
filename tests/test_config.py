@@ -175,7 +175,7 @@ def test_printer_type_defaults_to_preview(monkeypatch):
 
 def test_printer_type_invalid_raises(monkeypatch):
     """Invalid PRINTER_TYPE — ConfigError names the var."""
-    cfg = _reload(monkeypatch, {**_VALID_ENV, "PRINTER_TYPE": "zebra"})
+    cfg = _reload(monkeypatch, {**_VALID_ENV, "PRINTER_TYPE": "thermal"})
     with pytest.raises(ConfigError) as exc:
         cfg.validate(dotenv_path=None)
     assert "PRINTER_TYPE" in str(exc.value)

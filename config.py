@@ -169,7 +169,7 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
 
     poll_interval = _read_poll_interval(problems)
     scanner_type = _validate_choice("SCANNER_TYPE", "wedge", {"wedge", "manual"}, problems)
-    printer_type = _validate_choice("PRINTER_TYPE", "preview", {"preview"}, problems)
+    printer_type = _validate_choice("PRINTER_TYPE", "preview", {"preview", "zebra"}, problems)
     source_type = _validate_choice("SOURCE_TYPE", "portal", {"portal", "fake"}, problems)
     sink_type = _validate_choice("SINK_TYPE", "graphql", {"graphql", "null"}, problems)
     fake_data_raw = _read_optional_str("FAKE_SOURCE_DATA", "test_data/pos.json")

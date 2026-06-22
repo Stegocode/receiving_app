@@ -23,7 +23,11 @@ from tests.fakes.fake_sink import FakeResultSink
 # ── Fixture helpers ───────────────────────────────────────────────────────────
 
 
-def _make_record(receiving_id: str = "rid-001", match_status: str = "received") -> ReceivingRecord:
+def _make_record(
+    receiving_id: str = "rid-001",
+    match_status: str = "received",
+    serial: str = "",
+) -> ReceivingRecord:
     return ReceivingRecord(
         truck="T1",
         stop="S1",
@@ -37,6 +41,7 @@ def _make_record(receiving_id: str = "rid-001", match_status: str = "received") 
         match_status=match_status,
         purchase_order="PO-001",
         inventory_id="INV-001",
+        serial=serial,
     )
 
 
@@ -50,6 +55,7 @@ def _make_adapter() -> ResultSinkAdapter:
         attention_group_id="grp_att",
         inventory_id_col="col_inv",
         model_col="col_model",
+        serial_col="col_serial",
         status_col="col_status",
     )
 
@@ -145,6 +151,51 @@ def test_adapter_surface_attention_idempotent_second_call_skips_api(monkeypatch)
     assert call_count == 1
 
 
+# ── ResultSinkAdapter — serial column wiring (GATED) ─────────────────────────
+
+
+def test_adapter_emit_includes_serial_in_column_values(monkeypatch):
+    """serial_col must appear in the JSON-serialised column_values sent to the API.
+
+    Kills any mutation that drops serial_col from _create_item column_values dict.
+    If serial is "" the column is still sent (robot reads it unconditionally).
+    """
+    adapter = _make_adapter()
+    captured_col_values: dict = {}
+
+    def fake_post(url, **kwargs):
+        raw = kwargs["json"]["variables"]["columnValues"]
+        captured_col_values.update(__import__("json").loads(raw))
+        return _ok_response()
+
+    monkeypatch.setattr("adapters.sink.requests.post", fake_post)
+    adapter.emit(_make_record("rid-serial-01", "received", serial="SN-XXYYZZ"))
+
+    assert "col_serial" in captured_col_values, (
+        "serial_col key missing from column_values — SINK_SERIAL_COL is not wired"
+    )
+    assert captured_col_values["col_serial"] == "SN-XXYYZZ", (
+        f"expected 'SN-XXYYZZ' but got {captured_col_values['col_serial']!r}"
+    )
+
+
+def test_adapter_emit_serial_empty_string_still_sent(monkeypatch):
+    """Empty serial → col_serial key is present with value '' (not absent)."""
+    adapter = _make_adapter()
+    captured_col_values: dict = {}
+
+    def fake_post(url, **kwargs):
+        raw = kwargs["json"]["variables"]["columnValues"]
+        captured_col_values.update(__import__("json").loads(raw))
+        return _ok_response()
+
+    monkeypatch.setattr("adapters.sink.requests.post", fake_post)
+    adapter.emit(_make_record("rid-serial-02", "received", serial=""))
+
+    assert "col_serial" in captured_col_values
+    assert captured_col_values["col_serial"] == ""
+
+
 # ── ResultSinkAdapter — group routing ────────────────────────────────────────
 
 
@@ -152,8 +203,8 @@ def test_adapter_emit_received_routes_to_received_group(monkeypatch):
     adapter = _make_adapter()
     captured: dict = {}
 
-    def fake_post(url, json, headers, timeout):
-        captured["groupId"] = json["variables"]["groupId"]
+    def fake_post(url, **kwargs):
+        captured["groupId"] = kwargs["json"]["variables"]["groupId"]
         return _ok_response()
 
     monkeypatch.setattr("adapters.sink.requests.post", fake_post)
@@ -165,8 +216,8 @@ def test_adapter_emit_no_match_routes_to_no_match_group(monkeypatch):
     adapter = _make_adapter()
     captured: dict = {}
 
-    def fake_post(url, json, headers, timeout):
-        captured["groupId"] = json["variables"]["groupId"]
+    def fake_post(url, **kwargs):
+        captured["groupId"] = kwargs["json"]["variables"]["groupId"]
         return _ok_response()
 
     monkeypatch.setattr("adapters.sink.requests.post", fake_post)
@@ -178,8 +229,8 @@ def test_adapter_surface_attention_routes_to_attention_group(monkeypatch):
     adapter = _make_adapter()
     captured: dict = {}
 
-    def fake_post(url, json, headers, timeout):
-        captured["groupId"] = json["variables"]["groupId"]
+    def fake_post(url, **kwargs):
+        captured["groupId"] = kwargs["json"]["variables"]["groupId"]
         return _ok_response()
 
     monkeypatch.setattr("adapters.sink.requests.post", fake_post)

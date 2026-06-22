@@ -3,7 +3,7 @@ Owns: color/font constants and scan state machine logic for the receiving UI.
 Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3.
 May import: core.schema, sys, threading, time, tkinter (for type hints only).
 
-State markers: IDLE, MATCH_FOUND, NO_MATCH, MATCHING, PRINT_FAILED.
+State markers: IDLE, MID_SCAN, MATCHING, MATCH_FOUND, NO_MATCH, PRINT_FAILED.
 """
 
 from __future__ import annotations
@@ -54,26 +54,42 @@ def set_right_bg(ui: Any, color: str) -> None:
 
 def set_idle(ui: Any) -> None:
     ui._state = "IDLE"
+    ui._model_scan = None
     ui._stop_alarm()
     ui._stop_flash()
     ui._reset_btn.place_forget()
     set_right_bg(ui, C_IDLE)
     if ui._current_po:
-        ui._state_lbl.configure(text="SCAN BARCODE", fg=C_WHITE)
+        ui._state_lbl.configure(text="SCAN MODEL", fg=C_WHITE)
         ui._sec_lbl.configure(text=f"PO: {ui._current_po}", fg=C_ACCENT)
     else:
         ui._state_lbl.configure(text="ADD PO TO BEGIN", fg=C_WHITE)
         ui._sec_lbl.configure(text="Enter PO number(s) on the left", fg=C_DIM)
 
 
+def set_mid_scan(ui: Any, model_text: str) -> None:
+    """Enter MID_SCAN state: model barcode captured, waiting for serial barcode."""
+    ui._state = "MID_SCAN"
+    ui._reset_btn.place(relx=0.5, rely=0.82, anchor="center")
+    set_right_bg(ui, C_IDLE)
+    ui._state_lbl.configure(text=model_text, fg=C_WHITE)
+    ui._sec_lbl.configure(text="SCAN SERIAL NUMBER", fg=C_DIM)
+
+
 def set_match_found(ui: Any, record: ReceivingRecord) -> None:
     ui._state = "MATCH_FOUND"
+    ui._model_scan = None
     ui._stop_alarm()
     ui._stop_flash()
     set_right_bg(ui, C_MATCH)
     ui._state_lbl.configure(text="MATCHED", fg=C_WHITE)
     ui._sec_lbl.configure(
-        text=f"PO: {record.purchase_order}\nModel: {record.model_number}",
+        text=(
+            f"PO: {record.purchase_order}\n"
+            f"Inventory ID: {record.inventory_id}\n"
+            f"Model: {record.model_number}"
+            + (f"\nSerial: {record.serial}" if record.serial else "")
+        ),
         fg=C_WHITE,
     )
     ui._root.after(2000, ui._set_idle)

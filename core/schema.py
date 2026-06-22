@@ -11,7 +11,7 @@ from datetime import datetime
 
 from core.errors import ValidationError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _VALID_MATCH_STATUSES = {"received", "no_match", "needs_attention"}
 _STR_FIELDS = (
@@ -26,6 +26,8 @@ _STR_FIELDS = (
     "purchase_order",
     "inventory_id",
 )
+# Optional string fields: absent or None is acceptable; non-str is an error.
+_OPTIONAL_STR_FIELDS = ("serial", "brand", "vendor", "tags")
 
 
 @dataclass
@@ -48,6 +50,10 @@ class ReceivingRecord:
     match_status: str  # "received" | "no_match" | "needs_attention"
     purchase_order: str
     inventory_id: str
+    serial: str = ""  # serial number scanned with the physical unit
+    brand: str = ""  # brand from the inventory catalog
+    vendor: str = ""  # vendor from the inventory catalog
+    tags: str = ""  # tags from the inventory catalog
 
 
 def validate_record(data: dict) -> list[str]:
@@ -66,6 +72,10 @@ def validate_record(data: dict) -> list[str]:
                 f"match_status: '{data['match_status']}' is not one of "
                 f"{sorted(_VALID_MATCH_STATUSES)}"
             )
+
+    for field in _OPTIONAL_STR_FIELDS:
+        if field in data and data[field] is not None and not isinstance(data[field], str):
+            problems.append(f"{field}: expected str or None, got {type(data[field]).__name__}")
 
     ts = data.get("timestamp")
     if isinstance(ts, str) and ts.strip():
@@ -102,7 +112,13 @@ def validate_record(data: dict) -> list[str]:
 
 
 def migrate(data: dict) -> dict:
-    """Upgrade data dict to the current schema version. No-op for v1."""
+    """Upgrade data dict to the current schema version.
+
+    v1 → v2: add empty defaults for serial, brand, vendor, tags if absent.
+    """
+    for field in _OPTIONAL_STR_FIELDS:
+        if field not in data:
+            data = {**data, field: ""}
     return data
 
 
@@ -125,6 +141,10 @@ def from_dict(data: dict) -> ReceivingRecord:
         match_status=data["match_status"],
         purchase_order=data["purchase_order"],
         inventory_id=data["inventory_id"],
+        serial=data.get("serial") or "",
+        brand=data.get("brand") or "",
+        vendor=data.get("vendor") or "",
+        tags=data.get("tags") or "",
     )
 
 

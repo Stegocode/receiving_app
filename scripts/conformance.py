@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-FAILURES = []
+FAILURES: list[str] = []
 
 
 def fail(gate, msg):

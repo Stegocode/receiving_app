@@ -57,12 +57,22 @@ def _item(**kwargs) -> dict:
 # ── Migration runner ──────────────────────────────────────────────────────────
 
 
-def test_migration_runner_fresh_db_sets_user_version_1(tmp_path):
+def test_migration_runner_fresh_db_reaches_version_2_with_both_new_columns(tmp_path):
+    """Fresh DB applies both 0001 and 0002 migrations; user_version==2.
+
+    Both schema/0002 columns (po_inventory.claimed_at, receiving_items.serial)
+    must be present — kills any mutation that drops the migration file or one of
+    the ALTER TABLE statements.
+    """
     db_path = tmp_path / "test.db"
     SQLiteRepository(db_path=db_path)
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 1
+        po_cols = [row[1] for row in conn.execute("PRAGMA table_info(po_inventory)").fetchall()]
+        ri_cols = [row[1] for row in conn.execute("PRAGMA table_info(receiving_items)").fetchall()]
+    assert version == 2
+    assert "claimed_at" in po_cols, "po_inventory.claimed_at missing — 0002 migration not applied"
+    assert "serial" in ri_cols, "receiving_items.serial missing — 0002 migration not applied"
 
 
 def test_migration_runner_idempotent(tmp_path):
@@ -71,7 +81,7 @@ def test_migration_runner_idempotent(tmp_path):
     SQLiteRepository(db_path=db_path)  # second construction — no-op
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 1
+    assert version == 2
 
 
 def test_migration_runner_applies_0002_fixture(tmp_path, monkeypatch):
@@ -195,3 +205,97 @@ def test_timestamp_round_trips(tmp_path):
     repo.save_record(_record(timestamp=ts))
     pending = repo.get_pending()
     assert pending[0]["timestamp"] == ts
+
+
+def test_save_record_serial_round_trips(tmp_path):
+    """serial stored in save_record is readable from get_pending."""
+    repo = _repo(tmp_path)
+    repo.save_record(_record(serial="SN-TEST-9876"))
+    pending = repo.get_pending()
+    assert pending[0]["serial"] == "SN-TEST-9876"
+
+
+# ── Claiming tests ────────────────────────────────────────────────────────────
+
+
+def test_unclaimed_for_po_returns_all_rows_when_none_claimed(tmp_path):
+    """unclaimed_for_po returns all rows when none have claimed_at set."""
+    repo = _repo(tmp_path)
+    repo.upsert_items(
+        [
+            _item(inventory_id="INV-001", purchase_order="PO-001", model_number="MDL-A"),
+            _item(inventory_id="INV-002", purchase_order="PO-001", model_number="MDL-A"),
+        ]
+    )
+    rows = repo.unclaimed_for_po("PO-001")
+    assert len(rows) == 2
+    assert all(r["claimed_at"] is None for r in rows)
+
+
+def test_unclaimed_for_po_excludes_claimed_rows(tmp_path):
+    """After claiming INV-001, unclaimed_for_po must not include it.
+
+    Kills any mutation that drops the AND claimed_at IS NULL filter.
+    """
+    repo = _repo(tmp_path)
+    repo.upsert_items(
+        [
+            _item(inventory_id="INV-001", purchase_order="PO-001", model_number="MDL-A"),
+            _item(inventory_id="INV-002", purchase_order="PO-001", model_number="MDL-A"),
+        ]
+    )
+    repo.claim("INV-001", "2026-06-22T10:00:00")
+    rows = repo.unclaimed_for_po("PO-001")
+    assert len(rows) == 1
+    assert rows[0]["inventory_id"] == "INV-002"
+
+
+def test_claim_sets_claimed_at(tmp_path):
+    """claim() sets claimed_at on the target row."""
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item(inventory_id="INV-001", purchase_order="PO-001")])
+    repo.claim("INV-001", "2026-06-22T10:00:00")
+    rows = repo.get_purchase_order("PO-001")
+    assert len(rows) == 1
+    assert rows[0]["claimed_at"] == "2026-06-22T10:00:00"
+
+
+def test_claim_is_guarded_against_double_claiming(tmp_path):
+    """Claiming an already-claimed row (AND claimed_at IS NULL) is a silent no-op.
+
+    The second claim() call must not update claimed_at to a different value.
+    Kills any mutation that removes the AND claimed_at IS NULL guard from the
+    UPDATE statement — without the guard, the second call overwrites the timestamp.
+    """
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item(inventory_id="INV-001", purchase_order="PO-001")])
+    repo.claim("INV-001", "2026-06-22T10:00:00")
+    repo.claim("INV-001", "2026-06-22T11:00:00")  # second attempt — must be a no-op
+    rows = repo.get_purchase_order("PO-001")
+    assert rows[0]["claimed_at"] == "2026-06-22T10:00:00", (
+        "second claim() overwrote claimed_at — AND claimed_at IS NULL guard is missing"
+    )
+
+
+def test_claim_only_targets_matching_inventory_id(tmp_path):
+    """claim("INV-001") must not affect INV-002 on the same PO."""
+    repo = _repo(tmp_path)
+    repo.upsert_items(
+        [
+            _item(inventory_id="INV-001", purchase_order="PO-001"),
+            _item(inventory_id="INV-002", purchase_order="PO-001"),
+        ]
+    )
+    repo.claim("INV-001", "2026-06-22T10:00:00")
+    rows = repo.get_purchase_order("PO-001")
+    inv002 = next(r for r in rows if r["inventory_id"] == "INV-002")
+    assert inv002["claimed_at"] is None
+
+
+def test_unclaimed_for_po_returns_empty_when_all_claimed(tmp_path):
+    """After claiming all rows, unclaimed_for_po returns empty list."""
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item(inventory_id="INV-001", purchase_order="PO-001")])
+    repo.claim("INV-001", "2026-06-22T10:00:00")
+    rows = repo.unclaimed_for_po("PO-001")
+    assert rows == []

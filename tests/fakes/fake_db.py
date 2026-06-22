@@ -18,6 +18,7 @@ class FakeRepository:
 
     Idempotent on receiving_id: re-saving a record preserves emitted and created_at.
     mark_emitted raises RepositoryError if the receiving_id is unknown.
+    claim is a no-op when the row is already claimed (matches the SQL AND guard).
     """
 
     def __init__(self) -> None:
@@ -28,6 +29,20 @@ class FakeRepository:
         return [
             dict(item) for item in self._po_items.values() if item["purchase_order"] == po_number
         ]
+
+    def unclaimed_for_po(self, po_number: str) -> list[dict]:
+        """Return unclaimed rows for the given PO (claimed_at IS NULL)."""
+        return [
+            dict(item)
+            for item in self._po_items.values()
+            if item["purchase_order"] == po_number and item.get("claimed_at") is None
+        ]
+
+    def claim(self, inventory_id: str, claimed_at: str) -> None:
+        """Atomically mark a row claimed. No-op if already claimed (matches SQL AND guard)."""
+        item = self._po_items.get(inventory_id)
+        if item is not None and item.get("claimed_at") is None:
+            item["claimed_at"] = claimed_at
 
     def upsert_items(self, items: list[dict]) -> None:
         for item in items:
@@ -51,6 +66,10 @@ class FakeRepository:
             "quantity": record.quantity,
             "match_status": record.match_status,
             "timestamp": record.timestamp,
+            "serial": record.serial,
+            "brand": record.brand,
+            "vendor": record.vendor,
+            "tags": record.tags,
             "emitted": emitted,
             "created_at": created_at,
         }

@@ -5,7 +5,8 @@ Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3,
 May import: tkinter, core.schema, core.errors, core.ports, adapters.scanner,
             adapters.ui.controller, adapters.ui.scan_states.
 
-Scope assumptions: single-writer, single-machine, no concurrent users.
+Scope: single-writer, single-machine. Scan flow: IDLE→MID_SCAN→MATCHING.
+PO labels ("PO:{n}") switch the locked PO without triggering a model match.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ class ReceivingUI:
 
     def __init__(
         self,
-        process: Callable[[str, str], ReceivingRecord],
+        process: Callable[[str, str, str], ReceivingRecord],
         printer: Printer,
         scanner_type: str,
         populate: Callable[[str], None] | None = None,
@@ -68,6 +69,7 @@ class ReceivingUI:
         self._state = "IDLE"
         self._current_po = ""
         self._active_pos: list[str] = []
+        self._model_scan: str | None = None
         self._flash_after_id: str | None = None
         self._alarm_event = threading.Event()
 
@@ -231,20 +233,46 @@ class ReceivingUI:
     def _on_scan(self, barcode: str) -> None:
         if self._state == "MATCHING":
             return
-        if not self._current_po:
-            self._log("Add a PO number first")
-            return
-        self._state = "MATCHING"
-        scan_states.set_right_bg(self, C_IDLE)
-        self._state_lbl.configure(text="MATCHING…", fg=C_WHITE)
-        self._sec_lbl.configure(text=f"Barcode: {barcode}", fg=C_DIM)
-        threading.Thread(
-            target=self._run_match, args=(barcode, self._current_po), daemon=True
-        ).start()
 
-    def _run_match(self, barcode: str, po: str) -> None:
+        # PO barcode intercept — "PO:12345" switches the locked PO in any non-MATCHING state.
+        # PO labels encode "PO:{number}" per the label printer oracle.
+        cleaned = barcode.strip()
+        if cleaned.upper().startswith("PO:"):
+            po_num = cleaned[3:].strip()
+            if po_num in self._active_pos:
+                self._root.after(0, self._lock_po, po_num)
+            else:
+                self._log(f"PO {po_num} not loaded — enter it in the PO field first")
+            return
+
+        if self._state in ("IDLE", "MATCH_FOUND"):
+            if not self._current_po:
+                self._log("Add a PO number first")
+                return
+            self._model_scan = cleaned
+            self._root.after(0, scan_states.set_mid_scan, self, cleaned)
+            return
+
+        if self._state == "MID_SCAN":
+            model = self._model_scan or ""
+            serial = cleaned
+            self._state = "MATCHING"
+            self._root.after(0, self._state_lbl.configure, {"text": "MATCHING…", "fg": C_WHITE})
+            self._root.after(0, self._sec_lbl.configure, {"text": f"Serial: {serial}", "fg": C_DIM})
+            threading.Thread(
+                target=self._run_match, args=(model, serial, self._current_po), daemon=True
+            ).start()
+
+    def _lock_po(self, po_number: str) -> None:
+        """Switch the locked PO; reset the state machine to IDLE for the new PO."""
+        self._current_po = po_number
+        self._model_scan = None
+        scan_states.set_idle(self)
+        self._log(f"PO switched to {po_number} — scan model")
+
+    def _run_match(self, model: str, serial: str, po: str) -> None:
         try:
-            outcome = handle_scan(barcode, po, self._process, self._printer)
+            outcome = handle_scan(model, serial, po, self._process, self._printer)
         except Exception as exc:
             self._log(f"ERROR during scan: {exc}")
             self._root.after(0, self._set_idle)
@@ -254,7 +282,9 @@ class ReceivingUI:
     def _apply_outcome(self, outcome: ScanOutcome) -> None:
         rec = outcome.record
         if outcome.status == "received":
-            self._log(f"MATCHED  PO:{rec.purchase_order}  Model:{rec.model_number}")
+            self._log(
+                f"MATCHED  PO:{rec.purchase_order}  Model:{rec.model_number}  Serial:{rec.serial}"
+            )
             self._set_match_found(rec)
         elif outcome.status == "no_match":
             self._log(f"NO MATCH  PO:{rec.purchase_order}")

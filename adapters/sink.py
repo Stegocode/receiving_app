@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class ResultSinkAdapter:
     """Result sink backed by the project management board API.
 
-    All credentials, the base URL, and group IDs are injected at construction;
+    All credentials, the base URL, and group/column IDs are injected at construction;
     this class never reads config or environment variables directly.
     """
 
@@ -43,6 +43,7 @@ class ResultSinkAdapter:
         attention_group_id: str,
         inventory_id_col: str,
         model_col: str,
+        serial_col: str,
         status_col: str,
     ) -> None:
         self._base_url = base_url
@@ -53,6 +54,7 @@ class ResultSinkAdapter:
         self._attention_group_id = attention_group_id
         self._inventory_id_col = inventory_id_col
         self._model_col = model_col
+        self._serial_col = serial_col
         self._status_col = status_col
         self._seen: set[str] = set()
 
@@ -99,6 +101,7 @@ class ResultSinkAdapter:
             {
                 self._inventory_id_col: str(record.inventory_id),
                 self._model_col: str(record.model_number),
+                self._serial_col: str(record.serial),
                 self._status_col: {"label": status_label},
             }
         )
@@ -225,6 +228,7 @@ class NullSink:
                     "match_status": record.match_status,
                     "purchase_order": record.purchase_order,
                     "model_number": record.model_number,
+                    "serial": record.serial,
                 }
             )
         )
@@ -260,6 +264,7 @@ def make_sink(
     attention_group_id: str = "",
     inventory_id_col: str = "",
     model_col: str = "",
+    serial_col: str = "",
     status_col: str = "",
 ) -> ResultSinkAdapter | NullSink:
     """Construct a ResultSink from a type string.
@@ -278,6 +283,7 @@ def make_sink(
             attention_group_id,
             inventory_id_col,
             model_col,
+            serial_col,
             status_col,
         )
     raise SinkError(

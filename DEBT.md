@@ -162,3 +162,15 @@ log file: _ContextFormatter appends extra={} fields as key=value pairs, and json
 appear verbatim in the message. The gap is cosmetic (inconsistent call convention), not functional.
 Standardize on one structured style (extra={} preferred) in a future cleanup pass.
 Trigger: adding a log aggregator or formatter that expects one call convention.
+
+[DEBT-T16.2-001] 2026-06-22 — ZebraPrinter (adapters/printer.py) is PORTED but live-untested.
+CI has no Zebra printer driver, no win32print module, and no physical label printer.
+The ZPL string generation and printer enumeration logic (adapters/printer.py) was ported
+byte-faithfully from the oracle label_printer.py, but has never been exercised against
+a real Zebra printer. Validate the following before relying on ZebraPrinter in production:
+  - _find_zebra_printer(): confirm search terms match the driver name on the target machine.
+  - _build_zpl(): print a test label and verify layout (positions, font sizes, barcode region).
+  - win32print RAW spool path: confirm StartDocPrinter/StartPagePrinter/EndDocPrinter
+    sequence and UTF-8 encoding are accepted by the installed driver.
+  - PRINTER_TYPE=zebra in .env: verify the config switch selects ZebraPrinter at startup.
+Trigger: before the scanner is used in production receiving with label printing enabled.
