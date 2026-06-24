@@ -93,3 +93,19 @@ def test_serial_passed_through_to_process():
 
     handle_scan("SCAN-005", "SN-CAPTURED-123", "PO-001", process, printer)
     assert captured["serial"] == "SN-CAPTURED-123"
+
+
+def test_already_scanned_returns_already_scanned_status_without_printing():
+    """already_scanned record (T0-2 duplicate scan) yields ScanOutcome('already_scanned').
+
+    Printer must NOT be called — the unit was already received and should not get a
+    second label.  Mutation kill target: removing the already_scanned guard causes
+    this path to fall into the no_match branch, returning status 'no_match' instead
+    and failing the status assertion.
+    """
+    printer = FakePrinter()
+    outcome = handle_scan("SCAN-006", "", "PO-001", _process_stub("already_scanned"), printer)
+    assert outcome.status == "already_scanned"
+    assert outcome.status != "no_match"
+    assert outcome.status != "received"
+    assert len(printer.printed) == 0

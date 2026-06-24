@@ -18,7 +18,7 @@ from core.schema import ReceivingRecord
 class ScanOutcome:
     """Result of a single scan-and-print cycle.
 
-    status: "received" | "no_match" | "print_failed"
+    status: "received" | "no_match" | "already_scanned" | "print_failed"
     record: the ReceivingRecord produced by the scan (always present).
     """
 
@@ -42,6 +42,8 @@ def handle_scan(
     is already saved and can be re-printed without re-scanning.
     """
     record = process(barcode, serial, po_number)
+    if record.match_status == "already_scanned":
+        return ScanOutcome("already_scanned", record)
     if record.match_status != "received":
         return ScanOutcome("no_match", record)
     try:

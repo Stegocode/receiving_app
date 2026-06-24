@@ -4,7 +4,8 @@ Owns: color/font constants, scan state machine logic, and manual-entry widgets f
 Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3.
 May import: core.schema, sys, threading, time, tkinter.
 
-State markers: IDLE, MID_SCAN, MATCHING, MATCH_FOUND, NO_MATCH, PRINT_FAILED.
+State markers: IDLE, MID_SCAN, MATCHING, MATCH_FOUND, NO_MATCH, PRINT_FAILED,
+               ALREADY_SCANNED.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ C_WHITE = "#ECF0F1"
 C_DIM = "#BDC3C7"
 C_ACCENT = "#3498DB"
 C_INPUT_BG = "#243342"
+C_ALREADY_SCANNED = "#8E44AD"
 
 # ── Fonts ─────────────────────────────────────────────────────────────────────
 F_STATE = ("Arial", 72, "bold")
@@ -119,8 +121,33 @@ def set_print_failed(ui: Any, record: ReceivingRecord) -> None:
     )
 
 
+def set_already_scanned(ui: Any, record: ReceivingRecord) -> None:
+    """Enter ALREADY_SCANNED: barcode was already claimed on this PO (T0-2).
+
+    Distinct from NO_MATCH (red/alarm) and MATCH_FOUND (green/auto-clear at 2 s).
+    Shows purple banner with the original model; auto-clears after 3 s; Esc also dismisses.
+    A single bell signals the operator without triggering the looping no-match alarm.
+    """
+    ui._state = "ALREADY_SCANNED"
+    ui._model_scan = None
+    ui._alarm_event.set()
+    stop_flash(ui)
+    ui._reset_btn.place_forget()
+    set_right_bg(ui, C_ALREADY_SCANNED)
+    ui._state_lbl.configure(text="ALREADY SCANNED", fg=C_WHITE)
+    ui._sec_lbl.configure(
+        text=(
+            f"PO: {record.purchase_order}  ·  Model: {record.model_number}\n"
+            "Already scanned — no action needed  ·  Esc to dismiss"
+        ),
+        fg=C_WHITE,
+    )
+    ui._root.bell()
+    ui._root.after(3000, set_idle, ui)
+
+
 def dismiss_no_match(ui: Any) -> None:
-    if ui._state in ("NO_MATCH", "PRINT_FAILED"):
+    if ui._state in ("NO_MATCH", "PRINT_FAILED", "ALREADY_SCANNED"):
         ui._set_idle()
 
 
