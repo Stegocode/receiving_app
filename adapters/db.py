@@ -120,6 +120,74 @@ class SQLiteRepository:
         except sqlite3.Error as exc:
             raise RepositoryError(f"claim failed — {exc}") from exc
 
+    def claim_and_save(self, inventory_id: str, claimed_at: str, record: ReceivingRecord) -> None:
+        """Claim a po_inventory row and insert the receiving record in one atomic transaction.
+
+        Both writes share a single connection and commit together.  A process crash
+        mid-method leaves SQLite's transaction uncommitted — neither write persists,
+        so the unit remains unclaimed and scannable on retry.
+
+        The AND claimed_at IS NULL guard is preserved: a concurrent scan that already
+        claimed this row will find 0 rows updated; the record upsert is still safe
+        (same receiving_id → idempotent ON CONFLICT DO UPDATE).
+        """
+        try:
+            now = _now_iso()
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE po_inventory SET claimed_at = ? "
+                    "WHERE inventory_id = ? AND claimed_at IS NULL",
+                    (claimed_at, inventory_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO receiving_items
+                        (receiving_id, purchase_order, inventory_id, model_number,
+                         product_category, truck, stop, sales_order, product_size,
+                         quantity, match_status, timestamp, serial,
+                         emitted, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)
+                    ON CONFLICT(receiving_id) DO UPDATE SET
+                        purchase_order   = excluded.purchase_order,
+                        inventory_id     = excluded.inventory_id,
+                        model_number     = excluded.model_number,
+                        product_category = excluded.product_category,
+                        truck            = excluded.truck,
+                        stop             = excluded.stop,
+                        sales_order      = excluded.sales_order,
+                        product_size     = excluded.product_size,
+                        quantity         = excluded.quantity,
+                        match_status     = excluded.match_status,
+                        timestamp        = excluded.timestamp,
+                        serial           = excluded.serial,
+                        updated_at       = ?
+                    """,
+                    (
+                        record.receiving_id,
+                        record.purchase_order,
+                        record.inventory_id,
+                        record.model_number,
+                        record.product_category,
+                        record.truck,
+                        record.stop,
+                        record.sales_order,
+                        json.dumps(record.product_size),
+                        record.quantity,
+                        record.match_status,
+                        record.timestamp,
+                        record.serial,
+                        now,  # created_at (new rows only)
+                        now,  # updated_at in DO UPDATE
+                    ),
+                )
+            _log.info(
+                "db_claim_and_save inventory_id=%s receiving_id=%s",
+                inventory_id,
+                record.receiving_id,
+            )
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"claim_and_save failed — {exc}") from exc
+
     def upsert_items(self, items: list[dict]) -> None:
         try:
             with self._connect() as conn:

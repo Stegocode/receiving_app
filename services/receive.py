@@ -4,11 +4,12 @@ Must not: import concrete adapters; must not read environment variables or perfo
 May import: core.schema, core.matching, core.errors, core.ports.
 
 Invariant: a crash at any step in process_scan leaves the system recoverable on
-retry — save_record is durable before any sink call; was_emitted prevents
+retry — claim and save_record commit atomically via claim_and_save so a crash
+cannot leave a unit claimed without a corresponding record; was_emitted prevents
 double-emission; mark_emitted is set only after the sink acknowledges.
 
-Claiming invariant: claim() uses AND claimed_at IS NULL so a concurrent scan
-cannot steal an already-claimed row. Once claimed, the inventory_id is locked
+Claiming invariant: claim_and_save uses AND claimed_at IS NULL so a concurrent
+scan cannot steal an already-claimed row. Once claimed, the inventory_id is locked
 to this scan session (single-writer assumption — see boundary markers).
 """
 
@@ -100,12 +101,12 @@ def process_scan(
     """Match barcode against unclaimed PO units, claim the match, save and emit once.
 
     Uses unclaimed_for_po so each physical unit is only claimed once. On a match,
-    claim() is called before building the record — the AND claimed_at IS NULL guard
-    prevents two concurrent scans from claiming the same unit.
+    claim_and_save commits both the claim and the record in a single transaction —
+    a crash cannot leave a unit claimed without a corresponding record (T0-1).
 
     No-match is an expected outcome (match_status='no_match'), not an exception.
-    Step order: claim (if match) → save_record (durable) → was_emitted guard
-    → sink call → mark_emitted → return.
+    Step order: claim_and_save (match) or save_record (no-match) → was_emitted
+    guard → sink call → mark_emitted → return.
     """
     candidates = repository.unclaimed_for_po(po_number)
     best_model, _ = find_best_match(barcode, [c["model_number"] for c in candidates])
@@ -116,16 +117,17 @@ def process_scan(
         else None
     )
     inventory_id = matched["inventory_id"] if matched else ""
-
-    if matched:
-        repository.claim(inventory_id, datetime.now().isoformat())
+    claimed_at = datetime.now().isoformat()
 
     receiving_id = _make_receiving_id(po_number, inventory_id, barcode)
     record = _build_record(
         matched, best_model, po_number, inventory_id, receiving_id, serial, scanned_model=barcode
     )
 
-    repository.save_record(record)
+    if matched:
+        repository.claim_and_save(inventory_id, claimed_at, record)
+    else:
+        repository.save_record(record)
 
     if repository.was_emitted(record.receiving_id):
         return record
