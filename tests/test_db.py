@@ -299,3 +299,72 @@ def test_unclaimed_for_po_returns_empty_when_all_claimed(tmp_path):
     repo.claim("INV-001", "2026-06-22T10:00:00")
     rows = repo.unclaimed_for_po("PO-001")
     assert rows == []
+
+
+# ── claim_and_save (T0-1 atomicity) ──────────────────────────────────────────
+
+
+def test_claim_and_save_writes_both_claim_and_record(tmp_path):
+    """claim_and_save commits the inventory claim and the receiving record together.
+
+    Mutation kill targets:
+      - removing the UPDATE po_inventory call → unclaimed_for_po still returns the row
+      - removing the INSERT receiving_items call → get_pending() returns empty
+    Both assertions must pass for the method to be correct.
+    """
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item()])
+    record = _record()
+
+    repo.claim_and_save("INV-001", "2026-06-22T10:00:00", record)
+
+    # Inventory row is now claimed
+    rows = repo.unclaimed_for_po("PO-001")
+    assert rows == [], "inventory row must be claimed after claim_and_save"
+
+    po_rows = repo.get_purchase_order("PO-001")
+    assert po_rows[0]["claimed_at"] == "2026-06-22T10:00:00"
+
+    # Receiving record is saved
+    pending = repo.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["receiving_id"] == "REC-001"
+
+
+def test_claim_and_save_preserves_claimed_at_is_null_guard(tmp_path):
+    """A second claim_and_save on an already-claimed row does not overwrite claimed_at.
+
+    The AND claimed_at IS NULL guard in the UPDATE must be present: a concurrent
+    scan that races to claim the same row after it is already claimed must be a
+    no-op on the claim, while the record upsert still succeeds.
+
+    Mutation kill target: removing AND claimed_at IS NULL causes the second call
+    to overwrite claimed_at to '2026-06-22T11:00:00', failing the equality check.
+    """
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item()])
+
+    repo.claim_and_save("INV-001", "2026-06-22T10:00:00", _record())
+    repo.claim_and_save("INV-001", "2026-06-22T11:00:00", _record())  # second call — guard fires
+
+    po_rows = repo.get_purchase_order("PO-001")
+    assert po_rows[0]["claimed_at"] == "2026-06-22T10:00:00", (
+        "second claim_and_save overwrote claimed_at — AND claimed_at IS NULL guard is missing"
+    )
+
+
+def test_claim_and_save_record_idempotent_on_conflict(tmp_path):
+    """Re-calling claim_and_save with the same receiving_id upserts without error.
+
+    ON CONFLICT(receiving_id) DO UPDATE must not raise; emitted is preserved.
+    """
+    repo = _repo(tmp_path)
+    repo.upsert_items([_item()])
+    repo.claim_and_save("INV-001", "2026-06-22T10:00:00", _record())
+    repo.mark_emitted("REC-001")
+
+    # Re-save (retry scenario) — emitted must be preserved
+    repo.claim_and_save("INV-001", "2026-06-22T10:00:00", _record())
+
+    assert repo.was_emitted("REC-001") is True
+    assert len(repo.get_pending()) == 0

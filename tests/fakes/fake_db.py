@@ -44,6 +44,35 @@ class FakeRepository:
         if item is not None and item.get("claimed_at") is None:
             item["claimed_at"] = claimed_at
 
+    def claim_and_save(self, inventory_id: str, claimed_at: str, record: ReceivingRecord) -> None:
+        """Claim and save atomically — mirrors single-transaction SQLiteRepository behaviour."""
+        item = self._po_items.get(inventory_id)
+        if item is not None and item.get("claimed_at") is None:
+            item["claimed_at"] = claimed_at
+        existing = self._records.get(record.receiving_id)
+        emitted = existing["emitted"] if existing else False
+        created_at = existing["created_at"] if existing else record.timestamp
+        self._records[record.receiving_id] = {
+            "receiving_id": record.receiving_id,
+            "purchase_order": record.purchase_order,
+            "inventory_id": record.inventory_id,
+            "model_number": record.model_number,
+            "product_category": record.product_category,
+            "truck": record.truck,
+            "stop": record.stop,
+            "sales_order": record.sales_order,
+            "product_size": record.product_size,
+            "quantity": record.quantity,
+            "match_status": record.match_status,
+            "timestamp": record.timestamp,
+            "serial": record.serial,
+            "brand": record.brand,
+            "vendor": record.vendor,
+            "tags": record.tags,
+            "emitted": emitted,
+            "created_at": created_at,
+        }
+
     def upsert_items(self, items: list[dict]) -> None:
         for item in items:
             self._po_items[item["inventory_id"]] = dict(item)

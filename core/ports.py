@@ -24,6 +24,8 @@ class Repository(Protocol):
     unclaimed_for_po returns only rows without a claimed_at timestamp.
     claim atomically sets claimed_at on one row; the AND claimed_at IS NULL guard
     prevents double-claiming under concurrent access.
+    claim_and_save commits the claim and the receiving record in a single transaction
+    so a process crash cannot leave a unit claimed without a corresponding record.
     """
 
     def get_purchase_order(self, po_number: str) -> list[dict]: ...
@@ -37,6 +39,9 @@ class Repository(Protocol):
     def replace_po_items(self, items: list[dict]) -> None: ...
     def unclaimed_for_po(self, po_number: str) -> list[dict]: ...
     def claim(self, inventory_id: str, claimed_at: str) -> None: ...
+    def claim_and_save(
+        self, inventory_id: str, claimed_at: str, record: ReceivingRecord
+    ) -> None: ...
 
 
 @runtime_checkable
