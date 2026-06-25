@@ -9,7 +9,8 @@ not_measured: real network calls, real SQLite file, real result sink API,
 PASS:        barcode matches unclaimed PO unit → match_status='received', emit called.
 NO_MATCH:    barcode matches nothing → match_status='no_match', emit called.
 CLAIM_N:     N units of same model; N scans claim N distinct inventory_ids.
-CLAIM_EXHAUSTED: (N+1)th scan with no unclaimed units → no_match.
+CLAIM_EXHAUSTED_RESCAN:    (N+1)th scan with serial matching a claimed unit → already_scanned.
+CLAIM_EXHAUSTED_OVERCOUNT: (N+1)th scan with new serial (over-count) → no_match, emits.
 SERIAL:      serial parameter is carried through to the emitted record.
 BRAND_TAGS:  brand/vendor/tags from matched row are carried through to the record.
 """
@@ -190,15 +191,15 @@ def test_claiming_n_units_same_model_returns_n_distinct_inventory_ids() -> None:
     assert len(sink.emitted) == N
 
 
-def test_claiming_n_plus_one_scan_returns_already_scanned() -> None:
-    """After N claims exhaust the catalog, the (N+1)th scan is already_scanned (T0-2).
+def test_n_plus_one_rescan_of_claimed_serial_returns_already_scanned() -> None:
+    """(N+1)th scan with a serial matching a claimed unit → already_scanned, no new emit.
 
-    The barcode still matches claimed rows for the PO, so it is recognised as a
-    duplicate scan of an already-received unit — not a genuine no_match.
+    After N units are claimed, a re-scan of one already-received unit (same serial)
+    must be caught by the serial-based dup check and return already_scanned without
+    saving a new record or emitting a board item.
 
-    Mutation kill target: removing the claimed_for_po / already_scanned check causes
-    the (N+1)th scan to fall through to the no_match path, changing match_status to
-    'no_match' and failing the assertion.
+    Mutation kill target: removing or inverting the 'if matched is None and serial:'
+    guard causes this to fall through to no_match and emit, failing both assertions.
     """
     N = 2
     repo = FakeRepository()
@@ -206,16 +207,42 @@ def test_claiming_n_plus_one_scan_returns_already_scanned() -> None:
     for i in range(1, N + 1):
         repo.upsert_items([_make_candidate(f"INV-{i:03d}", "MODEL-A", "PO-001")])
 
-    for _ in range(N):
-        process_scan("MODEL-A", "PO-001", repo, sink)
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-002")
 
-    # (N+1)th scan — all units claimed; barcode matches claimed rows → already_scanned
-    record = process_scan("MODEL-A", "PO-001", repo, sink)
+    # Re-scan of SN-001 — already claimed → already_scanned, no new board item
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
     assert record.match_status == "already_scanned", (
-        f"expected already_scanned when all units are claimed, but got '{record.match_status}'"
+        f"re-scan of claimed serial must be 'already_scanned', got '{record.match_status}'"
     )
-    # No new emit — board is not polluted
-    assert len(sink.emitted) == N
+    assert len(sink.emitted) == N, "already_scanned path must not emit"
+
+
+def test_n_plus_one_new_serial_returns_no_match_and_emits() -> None:
+    """(N+1)th scan with a new serial (over-count) → no_match and emits the discrepancy.
+
+    After N units are claimed, a scan with a serial not matching any claimed unit is a
+    genuine over-count beyond the PO quantity.  It must reach no_match so the discrepancy
+    is visible on the board — suppressing it would silently hide a receiving error.
+
+    Mutation kill target: a mutation that returns already_scanned for any exhausted-catalog
+    scan would suppress the emit, failing the match_status and emit-count assertions.
+    """
+    N = 2
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    for i in range(1, N + 1):
+        repo.upsert_items([_make_candidate(f"INV-{i:03d}", "MODEL-A", "PO-001")])
+
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-002")
+
+    # Brand-new serial — not a re-scan, a real over-count; must surface as no_match
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-NEW")
+    assert record.match_status == "no_match", (
+        f"over-count with new serial must be 'no_match', got '{record.match_status}'"
+    )
+    assert len(sink.emitted) == N + 1, "over-count no_match must emit the discrepancy"
 
 
 def test_claiming_does_not_affect_other_models_on_same_po() -> None:

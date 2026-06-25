@@ -26,8 +26,12 @@ class Repository(Protocol):
     prevents double-claiming under concurrent access.
     claim_and_save commits the claim and the receiving record in a single transaction
     so a process crash cannot leave a unit claimed without a corresponding record.
-    claimed_for_po returns rows that ARE claimed — the complement of unclaimed_for_po,
-    used to detect duplicate scans of an already-received unit (T0-2).
+    claimed_for_po returns rows that ARE claimed — the complement of unclaimed_for_po.
+    find_claimed_by_serial returns a merged dict (po_inventory + receiving_items fields)
+    for the claimed unit on this PO whose receiving record has the given serial and
+    match_status='received'. Returns None when no such unit exists. Used by the
+    duplicate-scan detection path (T0-2) to identify re-scans of a specific physical
+    unit via its serial number, without being fooled by adjacent or fuzzy SKUs.
     """
 
     def get_purchase_order(self, po_number: str) -> list[dict]: ...
@@ -41,6 +45,7 @@ class Repository(Protocol):
     def replace_po_items(self, items: list[dict]) -> None: ...
     def unclaimed_for_po(self, po_number: str) -> list[dict]: ...
     def claimed_for_po(self, po_number: str) -> list[dict]: ...
+    def find_claimed_by_serial(self, po_number: str, serial: str) -> dict | None: ...
     def claim(self, inventory_id: str, claimed_at: str) -> None: ...
     def claim_and_save(
         self, inventory_id: str, claimed_at: str, record: ReceivingRecord

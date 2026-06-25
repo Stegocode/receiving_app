@@ -5,13 +5,12 @@ May import: pytest, services.receive, tests.fakes.
 
 not_measured: real SQLite, real sink API, USB scanner device.
 
-PASS:   received-then-rescanned → match_status='already_scanned', no new board emit.
+PASS:   received-then-rescanned (same serial) -> match_status='already_scanned', no new emit.
+BULK:   same model + distinct serials -> each claims a distinct slot, none is already_scanned.
+JUNKY:  junky vendor barcode + same serial as original -> already_scanned (barcode-independent).
 GUARD:  genuine no_match-from-the-start still emits no_match exactly once.
-GUARD:  a different barcode that genuinely doesn't match gets its own no_match.
-DATA:   already_scanned record carries the original model_number and inventory_id.
-MUTATION kill target: removing the claimed_for_po / already_scanned check causes
-    the re-scan to fall through to the no_match path and emit a spurious no_match,
-    failing the emit-count and match_status assertions in the primary test.
+GUARD:  a different serial on a different barcode gets its own no_match.
+DATA:   already_scanned record carries original model_number and inventory_id.
 """
 
 from __future__ import annotations
@@ -43,32 +42,27 @@ def _candidate(inventory_id: str, model_number: str, po_number: str, **extra: ob
     return base
 
 
-# ── Primary regression test (the case the prior suite missed) ─────────────────
+# -- Primary regression test ---------------------------------------------------
 
 
 def test_rescan_already_received_returns_already_scanned_and_does_not_emit() -> None:
-    """THE MISSING TEST (T0-2): first scan receives; second scan of same barcode
+    """THE MISSING TEST (T0-2): first scan receives; second scan of same serial
     must NOT emit a spurious no_match.
 
-    Mutation kill target: removing the claimed_for_po check (or removing the early
-    return on already_scanned) causes the re-scan to fall into the no_match path.
-    The genuine no_match has a different receiving_id (SHA256 with inventory_id=""),
-    was_emitted() returns False, and sink.emit() is called a second time.
-    That raises len(sink.emitted) to 2 and/or produces a no_match record, failing
-    both the emit-count assertion and the match_status assertion.
+    Mutation kill target: removing the find_claimed_by_serial check (or removing the
+    early return on already_scanned) causes the re-scan to fall into the no_match path,
+    raising len(sink.emitted) to 2 and/or producing a no_match record.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    # First scan — successful receive
-    first = process_scan("MODEL-A", "PO-001", repo, sink)
+    first = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
     assert first.match_status == "received"
     assert first.inventory_id == "INV-001"
     assert len(sink.emitted) == 1
 
-    # Second scan of the SAME barcode — unit is now claimed
-    second = process_scan("MODEL-A", "PO-001", repo, sink)
+    second = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
 
     assert second.match_status == "already_scanned", (
         f"expected 'already_scanned' on re-scan but got '{second.match_status}'"
@@ -76,20 +70,68 @@ def test_rescan_already_received_returns_already_scanned_and_does_not_emit() -> 
     assert second.inventory_id == "INV-001", (
         "already_scanned record must carry the original inventory_id"
     )
-    # Critically: no new emit — board is not polluted with a spurious no_match
     assert len(sink.emitted) == 1, (
-        f"expected exactly 1 emit total but got {len(sink.emitted)} — "
+        f"expected exactly 1 emit total but got {len(sink.emitted)} -- "
         "spurious no_match was emitted on re-scan"
     )
     assert len(sink.attention) == 0
 
 
+def test_bulk_same_model_different_serials_each_claim_distinct_slot() -> None:
+    """N scans of the same model with DISTINCT serials each claim a distinct slot.
+
+    Mutation kill target: serial-based duplicate detection must not fire when each
+    scan carries a different serial.  If it fires incorrectly, some scans return
+    already_scanned instead of received, and the set of claimed_ids shrinks below N.
+    """
+    N = 3
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    for i in range(1, N + 1):
+        repo.upsert_items([_candidate(f"INV-{i:03d}", "MODEL-A", "PO-001")])
+
+    serials = [f"SN-{i:03d}" for i in range(1, N + 1)]
+    claimed_ids = []
+    for serial in serials:
+        record = process_scan("MODEL-A", "PO-001", repo, sink, serial=serial)
+        assert record.match_status == "received", (
+            f"expected received for serial={serial!r}, got '{record.match_status}'"
+        )
+        claimed_ids.append(record.inventory_id)
+
+    assert len(set(claimed_ids)) == N, f"expected {N} distinct inventory_ids but got: {claimed_ids}"
+    assert len(sink.emitted) == N
+
+
+def test_rescan_junky_vendor_barcode_caught_by_serial() -> None:
+    """Re-scan with a junky vendor barcode but same serial -> already_scanned.
+
+    The duplicate check is barcode-independent: serial is the discriminator.
+    A genuine re-scan of a received unit (same physical unit, different barcode
+    encoding) must be detected even if the barcode does not fuzzy-match the catalog.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
+
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
+    assert len(sink.emitted) == 1
+
+    second = process_scan("VND-XYZ-MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
+
+    assert second.match_status == "already_scanned", (
+        f"same serial + junky barcode must be already_scanned, got '{second.match_status}'"
+    )
+    assert len(sink.emitted) == 1
+
+
+# -- Data-carrying tests -------------------------------------------------------
+
+
 def test_rescan_already_received_record_carries_original_model_and_inventory_id() -> None:
-    """already_scanned record preserves model_number and inventory_id from the claimed row.
+    """already_scanned record preserves model_number and inventory_id from the stored row.
 
     The scanner UI needs these to show the operator which unit was already scanned.
-    Mutation kill target: a mutation that returns a blank/default already_scanned record
-    (wrong model_number or empty inventory_id) fails both assertions.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -97,8 +139,8 @@ def test_rescan_already_received_record_carries_original_model_and_inventory_id(
         [_candidate("INV-XYZ", "MODEL-FRIDGE-42", "PO-999", brand="Whirlpool", tags="appliance")]
     )
 
-    process_scan("MODEL-FRIDGE-42", "PO-999", repo, sink)
-    second = process_scan("MODEL-FRIDGE-42", "PO-999", repo, sink)
+    process_scan("MODEL-FRIDGE-42", "PO-999", repo, sink, serial="SN-UNIT-1")
+    second = process_scan("MODEL-FRIDGE-42", "PO-999", repo, sink, serial="SN-UNIT-1")
 
     assert second.match_status == "already_scanned"
     assert second.model_number == "MODEL-FRIDGE-42"
@@ -107,7 +149,7 @@ def test_rescan_already_received_record_carries_original_model_and_inventory_id(
 
 
 def test_rescan_does_not_save_a_new_record_to_the_repository() -> None:
-    """Re-scanning does not add a second receiving record — no board churn.
+    """Re-scanning does not add a second receiving record -- no board churn.
 
     After two scans (one real, one duplicate), there is exactly one record
     in the repository and it is already emitted.
@@ -116,10 +158,9 @@ def test_rescan_does_not_save_a_new_record_to_the_repository() -> None:
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    first = process_scan("MODEL-A", "PO-001", repo, sink)
-    process_scan("MODEL-A", "PO-001", repo, sink)  # duplicate
+    first = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")  # duplicate
 
-    # Only the original record exists and is emitted
     assert repo.was_emitted(first.receiving_id)
     pending = repo.get_pending()
     assert len(pending) == 0, "re-scan must not leave an unemitted no_match record"
@@ -128,35 +169,34 @@ def test_rescan_does_not_save_a_new_record_to_the_repository() -> None:
 def test_rescan_receiving_id_matches_original_scan() -> None:
     """already_scanned record uses the same receiving_id as the original scan.
 
-    SHA256(po + inventory_id + barcode) is stable across scans of the same unit,
-    letting the UI or a log query link the duplicate scan back to the original record.
+    _build_already_scanned_record takes claimed_row["receiving_id"] directly from
+    the stored record, letting the UI or log query link the duplicate scan back
+    to the original.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    first = process_scan("MODEL-A", "PO-001", repo, sink)
-    second = process_scan("MODEL-A", "PO-001", repo, sink)
+    first = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
+    second = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-001")
 
     assert second.receiving_id == first.receiving_id
 
 
-# ── Regression: genuine no_match path must not be suppressed ──────────────────
+# -- Regression: genuine no_match path must not be suppressed -----------------
 
 
 def test_genuine_no_match_from_start_still_emits_no_match() -> None:
-    """A barcode that never matched anything still produces a no_match emit.
+    """A barcode+serial that never matched anything still produces a no_match emit.
 
     Regression guard: the duplicate-scan check must only fire when a claimed row
-    matches the barcode; a genuinely unknown barcode must still go to no_match.
-    Mutation kill target: a mutation that unconditionally returns already_scanned
-    (or suppresses the no_match emit) causes this assertion to fail.
+    with that exact serial exists; a genuinely unknown serial still goes to no_match.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    record = process_scan("TOTALLY-UNKNOWN-9999", "PO-001", repo, sink)
+    record = process_scan("TOTALLY-UNKNOWN-9999", "PO-001", repo, sink, serial="SN-UNKNOWN")
 
     assert record.match_status == "no_match"
     assert len(sink.emitted) == 1
@@ -164,22 +204,17 @@ def test_genuine_no_match_from_start_still_emits_no_match() -> None:
 
 
 def test_different_barcode_no_match_is_independent_of_claimed_unit() -> None:
-    """After one unit is received, a scan of a DIFFERENT unknown barcode is a
-    distinct no_match — not suppressed by the already-claimed unit.
-
-    Regression guard: the claimed_for_po match must be barcode-specific; an
-    unrelated barcode on the same PO still produces no_match.
+    """After one unit is received, a scan of a different unknown barcode is a
+    distinct no_match -- not suppressed by the already-claimed unit.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    # Claim MODEL-A
-    process_scan("MODEL-A", "PO-001", repo, sink)
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
     assert len(sink.emitted) == 1
 
-    # Different barcode — genuinely unknown
-    record = process_scan("MODEL-COMPLETELY-DIFFERENT", "PO-001", repo, sink)
+    record = process_scan("MODEL-COMPLETELY-DIFFERENT", "PO-001", repo, sink, serial="SN-OTHER")
 
     assert record.match_status == "no_match"
     assert len(sink.emitted) == 2
@@ -212,16 +247,16 @@ def test_no_match_idempotency_still_works_after_rescan_fix() -> None:
 
 
 def test_rescan_with_serial_carries_serial_on_already_scanned_record() -> None:
-    """Serial passed to re-scan appears on the already_scanned record.
+    """Serial from the re-scan appears on the already_scanned record.
 
-    The operator may scan a serial on the second pass; the returned record
-    should carry it even though no new record is written.
+    The already_scanned record reflects the serial provided on the duplicate
+    scan (same as the original, since serial-based detection requires exact match).
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    process_scan("MODEL-A", "PO-001", repo, sink)
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-DUPLICATE-99")
     second = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-DUPLICATE-99")
 
     assert second.match_status == "already_scanned"

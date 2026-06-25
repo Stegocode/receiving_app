@@ -126,6 +126,32 @@ class FakeRepository:
         record = self._records.get(receiving_id)
         return bool(record["emitted"]) if record else False
 
+    def find_claimed_by_serial(self, po_number: str, serial: str) -> dict | None:
+        """Return merged catalog+logistics row for a received unit with the given serial."""
+        for rec in self._records.values():
+            if (
+                rec.get("purchase_order") == po_number
+                and rec.get("serial") == serial
+                and rec.get("match_status") == "received"
+            ):
+                inv_id = rec.get("inventory_id", "")
+                po_item = self._po_items.get(inv_id, {})
+                return {
+                    "inventory_id": inv_id,
+                    "receiving_id": rec["receiving_id"],
+                    "model_number": rec.get("model_number", ""),
+                    "truck": rec.get("truck", ""),
+                    "stop": rec.get("stop", ""),
+                    "sales_order": rec.get("sales_order", ""),
+                    "product_category": rec.get("product_category", ""),
+                    "product_size": rec.get("product_size", {"w": 0, "d": 0, "h": 0}),
+                    "quantity": rec.get("quantity", 1),
+                    "brand": po_item.get("brand") or "",
+                    "vendor": po_item.get("vendor") or "",
+                    "tags": po_item.get("tags") or "",
+                }
+        return None
+
     def clear_po_items(self) -> None:
         self._po_items.clear()
 

@@ -3,9 +3,6 @@ Owns: SQLite implementation of the Repository port.
 Must not: import services or other adapters.
 May import: core.ports, core.schema, core.errors, sqlite3, config, json, logging, pathlib, re.
 """
-# Owns: SQLite implementation of the Repository port.
-# Must not: import services or other adapters.
-# May import: core.ports, core.schema, core.errors, sqlite3, config, json, logging, pathlib, re.
 
 from __future__ import annotations
 
@@ -55,7 +52,6 @@ class SQLiteRepository:
 
     def _ensure_schema(self) -> None:
         """Apply all unapplied migrations in schema/ in ascending order.
-
         Uses PRAGMA user_version as the applied-version marker.  Each migration
         runs inside a single BEGIN/COMMIT block so the version bump is atomic
         with the schema change.  Idempotent: a second call applies nothing when
@@ -117,11 +113,7 @@ class SQLiteRepository:
             raise RepositoryError(f"claimed_for_po failed — {exc}") from exc
 
     def claim(self, inventory_id: str, claimed_at: str) -> None:
-        """Atomically mark one po_inventory row as claimed.
-
-        The AND claimed_at IS NULL guard prevents double-claiming: if a concurrent
-        scan already claimed this row, rowcount == 0 and this call is a no-op.
-        """
+        """Mark po_inventory row claimed; AND claimed_at IS NULL prevents double-claim."""
         try:
             with self._connect() as conn:
                 conn.execute(
@@ -328,6 +320,33 @@ class SQLiteRepository:
                 return bool(row["emitted"]) if row else False
         except sqlite3.Error as exc:
             raise RepositoryError(f"was_emitted failed — {exc}") from exc
+
+    def find_claimed_by_serial(self, po_number: str, serial: str) -> dict | None:
+        """Return merged catalog+logistics row for a received unit with the given serial."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    """
+                    SELECT pi.inventory_id, pi.model_number, pi.brand, pi.vendor, pi.tags,
+                           ri.receiving_id, ri.truck, ri.stop, ri.sales_order,
+                           ri.product_category, ri.product_size, ri.quantity
+                    FROM receiving_items ri
+                    JOIN po_inventory pi ON pi.inventory_id = ri.inventory_id
+                    WHERE ri.purchase_order = ? AND ri.serial = ?
+                      AND ri.match_status = 'received'
+                    LIMIT 1
+                    """,
+                    (po_number, serial),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                d = dict(row)
+                raw_ps = d.get("product_size")
+                d["product_size"] = json.loads(raw_ps) if raw_ps else {"w": 0, "d": 0, "h": 0}
+                return d
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"find_claimed_by_serial failed — {exc}") from exc
 
     def clear_po_items(self) -> None:
         try:

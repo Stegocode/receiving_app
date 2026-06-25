@@ -10,27 +10,28 @@ not_measured: real network calls, real SQLite file, real result sink API,
               real USB scanner device, real Tkinter UI.
 
 ALREADY_SCANNED_DETECT:
-  Re-scan of an already-claimed barcode returns match_status='already_scanned'.
-  First scan of an unclaimed unit must NOT return 'already_scanned'
-  (both directions asserted so inverting the guard is caught).
+  Re-scan carrying the same serial as an already-received unit returns
+  match_status='already_scanned'.  First scan of the same unit (unclaimed)
+  must NOT return 'already_scanned' (both directions asserted so inverting
+  the guard is caught).
 
 ALREADY_SCANNED_NO_SIDE_EFFECTS:
   The duplicate path exits before save_record / claim_and_save / sink.emit /
-  mark_emitted — no board item is created, no record is written.
+  mark_emitted -- no board item is created, no record is written.
 
 ALREADY_SCANNED_FIELDS_FULL:
-  All catalog fields are carried from the claimed_row onto the record.
-  Exact barcode used (barcode == model_number); model_number key-lookup
-  mutations are Category F equivalents (default unreachable).
+  All catalog fields are carried from the find_claimed_by_serial row onto the
+  record.  Uses a junky vendor barcode on the re-scan (barcode != model_number)
+  to prove the result is barcode-independent.
 
 ALREADY_SCANNED_FIELDS_SPARSE:
-  Missing optional fields in claimed_row fall back to schema defaults.
-  Verifies get(key, default) defaults are correct, not corrupted.
+  Missing optional fields in the stored row fall back to schema defaults.
 
-ADJACENT_SKU_REGRESSION:
-  A barcode that fuzzy-matches a claimed model but is NOT an exact match
-  must fall through to no_match — NOT already_scanned. This guards against
-  reverting the duplicate-detection path back to fuzzy matching.
+BLANK_SERIAL_GUARD:
+  A scan with blank serial never triggers already_scanned.
+
+ADJACENT_SKU_GUARD:
+  A scan with a DIFFERENT serial never triggers already_scanned.
 """
 
 from __future__ import annotations
@@ -69,38 +70,33 @@ def _make_candidate(
     }
 
 
-# ── Already-scanned detection tests (GATED — T0-2) ────────────────────────────
-# ── The detection branch (if matched is None: … if dup_row: … return) and ─────
-# ── _build_already_scanned_record field assignments are the T0-2 new code. ─────
+# -- Already-scanned detection tests (GATED -- T0-2) --------------------------
 
 
-def test_already_scanned_fires_for_claimed_unit_not_for_unclaimed() -> None:
-    """Detection fires ONLY after the unit is claimed; NOT for an unclaimed unit.
+def test_already_scanned_fires_for_claimed_serial_not_for_unclaimed() -> None:
+    """Detection fires ONLY when the serial matches a claimed unit; NOT for an unclaimed unit.
 
-    Both directions asserted so inverting 'if matched is None:' or 'if dup_row:'
-    is caught:
-      - first scan of unclaimed unit must be 'received', never 'already_scanned'
-      - re-scan of same (now claimed) unit must be 'already_scanned', never 'no_match'
+    Both directions asserted so mutations that invert the guard or the dup_row branch
+    are caught:
+      - first scan (unit unclaimed) must be 'received', never 'already_scanned'
+      - re-scan with same serial (unit now claimed) must be 'already_scanned'
     Also verifies no new emit and no new record are created on the duplicate path.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
 
-    first = process_scan("MODEL-A", "PO-001", repo, sink)
+    first = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
     assert first.match_status == "received", (
         f"first scan of unclaimed unit must be 'received', got '{first.match_status}'"
     )
     assert len(sink.emitted) == 1
 
-    second = process_scan("MODEL-A", "PO-001", repo, sink)
+    second = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-UNIT-1")
     assert second.match_status == "already_scanned", (
-        f"re-scan of claimed unit must be 'already_scanned', got '{second.match_status}'"
+        f"re-scan with same serial must be 'already_scanned', got '{second.match_status}'"
     )
-    # No new emit — the board must not receive a spurious no_match item.
     assert len(sink.emitted) == 1, "already_scanned path must not emit"
-    # No new save — verify the duplicate path did not fall through to save_record.
-    # If it did, a no_match record would be saved with receiving_id = sha256(po + "" + barcode).
     no_match_rid = hashlib.sha256(b"PO-001MODEL-A").hexdigest()
     assert not repo.was_emitted(no_match_rid), (
         "already_scanned path must not fall through and save a no_match record"
@@ -108,21 +104,19 @@ def test_already_scanned_fires_for_claimed_unit_not_for_unclaimed() -> None:
 
 
 def test_already_scanned_record_carries_all_fields_from_claimed_row() -> None:
-    """All catalog fields are copied from the claimed row onto the already_scanned record.
+    """All catalog+logistics fields are copied from the find_claimed_by_serial row.
 
-    Duplicate detection now requires exact model_number match (== barcode), so barcode
-    equals model_number here. model_number key-lookup mutations (recv_dup_br_1/br_2)
-    are Category F equivalents — default is unreachable because dup_row was selected
-    via c["model_number"] == barcode, guaranteeing the key is present.
+    Uses a junky vendor barcode ('VND-JUNK-MODEL-A') on the RE-SCAN while the
+    original scan used the clean catalog barcode ('MODEL-A') with the same serial.
+    This proves the result is barcode-independent: model_number == 'MODEL-A' comes
+    from the stored record (not the current scan barcode), so key-lookup mutations
+    in _build_already_scanned_record are caught.
 
     Kills:
-      - All other _build_already_scanned_record key-lookup survivors: get(None,…) /
-        get("XX…XX",…) / get("FIELD_NAME",…) for truck/stop/sales_order/category/
-        product_size/quantity.
-      - 'and' operator mutations on brand/vendor/tags: non-empty value collapses to ''
-        when 'or' is replaced with 'and' (e.g. "Acme" and "" → "").
-      - process_scan barcode→None: changes receiving_id hash, caught by exact hash assert.
-      - process_scan serial→None: collapses serial to '' via from_dict, caught by assert.
+      - All _build_already_scanned_record key-lookup survivors.
+      - 'and' operator mutations on brand/vendor/tags.
+      - receiving_id mutations: uses claimed_row["receiving_id"] (original scan hash),
+        so any mutation that recomputes the hash from the current barcode fails.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -139,12 +133,15 @@ def test_already_scanned_record_carries_all_fields_from_claimed_row() -> None:
         ]
     )
 
-    process_scan("MODEL-A", "PO-001", repo, sink)
-    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-DUP-99")
+    # First scan with clean catalog barcode + serial -- claims INV-001.
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-DUP-99")
+
+    # Re-scan: junky vendor barcode + SAME serial -> serial match fires already_scanned.
+    record = process_scan("VND-JUNK-MODEL-A", "PO-001", repo, sink, serial="SN-DUP-99")
 
     assert record.match_status == "already_scanned"
     assert record.purchase_order == "PO-001"
-    assert record.model_number == "MODEL-A"
+    assert record.model_number == "MODEL-A"  # stored value, not re-scan barcode
     assert record.inventory_id == "INV-001"
     assert record.truck == "T1"
     assert record.stop == "S1"
@@ -156,24 +153,17 @@ def test_already_scanned_record_carries_all_fields_from_claimed_row() -> None:
     assert record.brand == "Acme"
     assert record.vendor == "Dist-Y"
     assert record.tags == "a,b"
-    # receiving_id = sha256(po_number + inventory_id + barcode) — same hash as original scan.
+    # receiving_id = original scan's hash sha256(po + inv_id + original_barcode)
     expected_rid = hashlib.sha256(b"PO-001INV-001MODEL-A").hexdigest()
     assert record.receiving_id == expected_rid
 
 
 def test_already_scanned_sparse_row_uses_field_defaults() -> None:
-    """Missing optional fields in the claimed row fall back to schema defaults.
+    """Missing optional fields in the stored row fall back to schema defaults.
 
     Seeds a minimal item (only inventory_id, model_number, purchase_order) so that
     every get(key, default) call in _build_already_scanned_record exercises the
-    default branch.  Kills:
-      - get(key, ) / get(key, None): no-default or None-default causes ValidationError
-        on required ReceivingRecord fields → test raises → mutant caught.
-      - get(key, "XXXX"): wrong string default → field ≠ '' → assertion fails.
-      - get(key, 2): wrong int default → quantity ≠ 1 → assertion fails.
-      - get(key, {"w": 1, …}): wrong product_size default → assertion fails.
-      - get("brand") or "XXXX": returns "XXXX" when brand absent → brand ≠ '' fails.
-      (Same logic applies to vendor and tags.)
+    default branch.  Kills wrong-default and missing-default mutations.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
@@ -181,8 +171,8 @@ def test_already_scanned_sparse_row_uses_field_defaults() -> None:
         [{"inventory_id": "INV-001", "purchase_order": "PO-001", "model_number": "MODEL-A"}]
     )
 
-    process_scan("MODEL-A", "PO-001", repo, sink)
-    record = process_scan("MODEL-A", "PO-001", repo, sink)
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-SPARSE")
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="SN-SPARSE")
 
     assert record.match_status == "already_scanned"
     assert record.truck == ""
@@ -196,35 +186,50 @@ def test_already_scanned_sparse_row_uses_field_defaults() -> None:
     assert record.tags == ""
 
 
-# ── Adjacent-SKU regression (GATED) ──────────────────────────────────────────
-# ── Guards against reverting duplicate detection to fuzzy matching. ───────────
+def test_blank_serial_falls_through_to_no_match() -> None:
+    """A blank serial bypasses the duplicate check; no_match is returned instead.
+
+    Scenario: unit received with blank serial, then re-scanned also with blank
+    serial.  The 'and serial' guard in process_scan must skip find_claimed_by_serial.
+
+    Kills the mutant that removes the 'and serial' guard: without it,
+    find_claimed_by_serial("PO-001", "") finds the blank-serial record and
+    returns already_scanned instead of no_match.
+    """
+    repo = FakeRepository()
+    sink = FakeResultSink()
+    repo.upsert_items([_make_candidate("INV-001", "MODEL-A", "PO-001")])
+
+    process_scan("MODEL-A", "PO-001", repo, sink, serial="")
+
+    record = process_scan("MODEL-A", "PO-001", repo, sink, serial="")
+
+    assert record.match_status == "no_match", (
+        f"blank serial must not trigger already_scanned, got '{record.match_status}'"
+    )
 
 
-def test_adjacent_sku_is_no_match_not_already_scanned() -> None:
-    """Adjacent SKU (HZ00 claimed, HZ01 scanned) must be no_match, never already_scanned.
+def test_adjacent_sku_different_serial_is_no_match_not_already_scanned() -> None:
+    """A different serial never triggers already_scanned.
 
-    WRF560SEHZ00 and WRF560SEHZ01 score ≈ 0.97 under SequenceMatcher — well above the
-    0.6 threshold. Fuzzy duplicate detection would wrongly return already_scanned and
-    suppress the emit; exact match correctly falls through to no_match and emits.
+    Scenario: WRF560SEHZ00 received with SN-HZ00; operator scans adjacent SKU
+    WRF560SEHZ01 with serial SN-HZ01.  Physically distinct units; must produce
+    no_match, not already_scanned.
 
-    Mutation kill target: replacing '==' with find_best_match in the duplicate-detection
-    path causes this test to return already_scanned instead of no_match, failing the
-    match_status assertion and the emit-count assertion.
+    Kills the mutant that reverts to barcode/model comparison: 'WRF560SEHZ01'
+    fuzzy-matches 'WRF560SEHZ00' (score > 0.6) and would silently swallow the
+    adjacent-SKU scan as a duplicate.  Serial-based detection avoids this.
     """
     repo = FakeRepository()
     sink = FakeResultSink()
     repo.upsert_items([_make_candidate("INV-HZ00", "WRF560SEHZ00", "PO-001")])
 
-    # Claim the HZ00 unit.
-    first = process_scan("WRF560SEHZ00", "PO-001", repo, sink)
-    assert first.match_status == "received"
+    process_scan("WRF560SEHZ00", "PO-001", repo, sink, serial="SN-HZ00")
     assert len(sink.emitted) == 1
 
-    # Scan the adjacent HZ01 SKU — must NOT be detected as a duplicate of HZ00.
-    second = process_scan("WRF560SEHZ01", "PO-001", repo, sink)
-    assert second.match_status == "no_match", (
-        f"adjacent SKU 'WRF560SEHZ01' must be no_match when only 'WRF560SEHZ00' is"
-        f" claimed, got '{second.match_status}' — duplicate detection may be using"
-        " fuzzy matching instead of exact match"
+    record = process_scan("WRF560SEHZ01", "PO-001", repo, sink, serial="SN-HZ01")
+
+    assert record.match_status == "no_match", (
+        f"different serial must not trigger already_scanned, got '{record.match_status}'"
     )
-    assert len(sink.emitted) == 2, "no_match for adjacent SKU must emit a board item"
+    assert len(sink.emitted) == 2
