@@ -74,7 +74,11 @@ def main() -> None:
             _log.exception("robot_pass_error")
         finally:
             executor.close()
-        time.sleep(config.POLL_INTERVAL_SECS)
+        try:
+            time.sleep(config.POLL_INTERVAL_SECS)
+        except KeyboardInterrupt:
+            _log.info("robot_shutdown")
+            break
 
 
 if __name__ == "__main__":

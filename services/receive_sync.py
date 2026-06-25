@@ -53,46 +53,43 @@ def receive_pending(board: ReceivingBoard, executor: ReceivingExecutor) -> Recei
     received = no_match = failed = skipped = 0
     logger.info("receive_loop_start ready=%d", len(items))
 
-    try:
-        for item in items:
-            if not _is_valid(item):
-                item_id = item.get("item_id")
-                if item_id:
-                    board.mark_no_match(item_id)
-                skipped += 1
-                logger.warning(
-                    "receive_invalid_item item_id=%s",
-                    item.get("item_id", "unknown"),
-                )
-                continue
+    for item in items:
+        if not _is_valid(item):
+            item_id = item.get("item_id")
+            if item_id:
+                board.mark_no_match(item_id)
+            skipped += 1
+            logger.warning(
+                "receive_invalid_item item_id=%s",
+                item.get("item_id", "unknown"),
+            )
+            continue
 
-            item_id = item["item_id"]
-            try:
-                outcome = executor.receive_item(
-                    item["po_number"], item["inventory_id"], item["model"], item["serial"]
-                )
-                if outcome == "received":
-                    board.mark_received(item_id)
-                    received += 1
-                else:
-                    board.mark_no_match(item_id)
-                    no_match += 1
-            except ExecutorError as exc:
-                failed += 1
-                logger.warning("receive_executor_error item_id=%s error=%s", item_id, exc)
+        item_id = item["item_id"]
+        try:
+            outcome = executor.receive_item(
+                item["po_number"], item["inventory_id"], item["model"], item["serial"]
+            )
+            if outcome == "received":
+                board.mark_received(item_id)
+                received += 1
+            else:
+                board.mark_no_match(item_id)
+                no_match += 1
+        except ExecutorError as exc:
+            failed += 1
+            logger.warning("receive_executor_error item_id=%s error=%s", item_id, exc)
 
-            attempted = received + no_match + failed
-            if (
-                attempted >= MIN_ATTEMPTS_BEFORE_KILL
-                and (received / attempted) < RECEIVE_KILL_THRESHOLD
-            ):
-                logger.error("receive_loop_kill rcvd=%d attempted=%d", received, attempted)
-                raise SyncKillError(
-                    f"receive aborted — {received}/{attempted} received, below "
-                    f"{RECEIVE_KILL_THRESHOLD:.0%}; remaining items left READY"
-                )
-    finally:
-        executor.close()
+        attempted = received + no_match + failed
+        if (
+            attempted >= MIN_ATTEMPTS_BEFORE_KILL
+            and (received / attempted) < RECEIVE_KILL_THRESHOLD
+        ):
+            logger.error("receive_loop_kill rcvd=%d attempted=%d", received, attempted)
+            raise SyncKillError(
+                f"receive aborted — {received}/{attempted} received, below "
+                f"{RECEIVE_KILL_THRESHOLD:.0%}; remaining items left READY"
+            )
 
     if failed == 0 and no_match == 0:
         logger.info("receive_loop_complete rcvd=%d skipped=%d", received, skipped)

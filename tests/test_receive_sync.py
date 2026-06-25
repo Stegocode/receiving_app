@@ -58,7 +58,7 @@ def test_all_received() -> None:
     assert board.received == ["I0", "I1", "I2"]
     assert board.no_match == []
     assert result == ReceiveResult(received=3, no_match=0, failed=0, skipped=0)
-    assert executor.closed is True
+    assert executor.closed is False  # lifecycle owned by runner, not service
     # Each call must carry the real field values from the item dict.
     assert executor.calls[0] == ("PO-001", "INV-0", "MDL-A", "SN-I0")
     assert executor.calls[1] == ("PO-001", "INV-1", "MDL-A", "SN-I1")
@@ -132,7 +132,7 @@ def test_executor_error_leaves_item_ready() -> None:
     assert result.received == 0
     assert "I0" not in board.received
     assert "I0" not in board.no_match
-    assert executor.closed is True
+    assert executor.closed is False  # lifecycle owned by runner, not service
 
 
 # ── KILL: circuit breaker mid-loop ───────────────────────────────────────────
@@ -221,4 +221,4 @@ def test_kill_trips_mid_loop_and_aborts() -> None:
 
     assert len(executor.calls) == 5
     assert len(executor.calls) < len(failing) + len(extra)
-    assert executor.closed is True
+    assert executor.closed is False  # lifecycle owned by runner, not service
