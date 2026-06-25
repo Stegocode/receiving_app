@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from adapters.source import PortalSource, _parse_on_order_csv
+from adapters.source import PortalSource, _guard_download_dir, _parse_on_order_csv
 from core.errors import SourceError
 from core.ports import PurchaseOrderSource
 from tests.fakes.fake_source import FakePurchaseOrderSource
@@ -345,3 +345,50 @@ def test_fake_source_missing_file_raises_source_error(tmp_path: Path):
     with pytest.raises(SourceError) as exc_info:
         src.fetch_order("10001")
     assert exc_info.value.__cause__ is not None
+
+
+# ── Download-dir safety guard ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("unsafe", [Path.home(), Path("/")])
+def test_guard_rejects_unsafe_paths(unsafe: Path):
+    """_guard_download_dir raises SourceError for home dir and filesystem root."""
+    with pytest.raises(SourceError, match="safety check"):
+        _guard_download_dir(unsafe.resolve())
+
+
+def test_guard_accepts_normal_subdir(tmp_path: Path):
+    """_guard_download_dir does not raise for a normal tmp_path subdirectory."""
+    _guard_download_dir((tmp_path / "downloads").resolve())
+
+
+def test_unsafe_download_dir_raises_before_browser_launch():
+    """PortalSource raises SourceError for unsafe DOWNLOAD_DIR before touching the browser."""
+    src = PortalSource("http://x", "u", "p", Path.home())
+    with (
+        patch("adapters.source._build_driver") as mock_driver,
+        pytest.raises(SourceError, match="safety check"),
+    ):
+        src.fetch_all_open_orders()
+    mock_driver.assert_not_called()
+
+
+def test_cleanup_scopes_delete_to_export_files(tmp_path: Path):
+    """Pattern-scoped cleanup: .csv and .crdownload deleted; unrelated .txt survives."""
+    dl = tmp_path / "downloads"
+    dl.mkdir()
+    csv1 = dl / "serial-number-inventory.csv"
+    csv2 = dl / "stale.csv"
+    crdown = dl / "partial.crdownload"
+    unrelated = dl / "important.txt"
+    for f, content in [(csv1, "a"), (csv2, "b"), (crdown, "c"), (unrelated, "keep")]:
+        f.write_text(content)
+
+    with ExitStack() as stack:
+        _stub_pipeline(stack, [], tmp_path)
+        PortalSource("http://x", "u", "p", dl).fetch_all_open_orders()
+
+    assert not csv1.exists(), ".csv should be deleted"
+    assert not csv2.exists(), "stale .csv should be deleted"
+    assert not crdown.exists(), ".crdownload should be deleted"
+    assert unrelated.exists(), "unrelated .txt must survive"

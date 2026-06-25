@@ -170,6 +170,22 @@ def _wait_for_csv(download_dir: Path) -> Path:
     raise SourceError(f"export timed out — no CSV found in {download_dir}")
 
 
+def _guard_download_dir(path: Path) -> None:
+    """Raise SourceError if path is unsafe for bulk-deletion of export files.
+
+    Rejects the user home directory, the filesystem root, and any path that is
+    its own parent. Must be called with a resolved (absolute) path.
+    """
+    home = Path.home().resolve()
+    root = Path("/").resolve()
+    if path in (home, root) or path.parent == path:
+        raise SourceError(
+            f"DOWNLOAD_DIR {str(path)!r} failed the safety check — "
+            "it must not be the home directory or filesystem root. "
+            "Configure a dedicated download subdirectory."
+        )
+
+
 def _parse_on_order_csv(csv_path: Path) -> list[dict]:
     """Parse the on-order inventory CSV. Returns list of row dicts."""
     try:
@@ -265,14 +281,18 @@ class PortalSource:
 
     def _fetch_all(self) -> list[dict]:
         """Scrape the full on-order inventory CSV and return parsed rows."""
-        self._download_dir.mkdir(parents=True, exist_ok=True)
-        # Clear stale files so _wait_for_csv does not pick up a previous export.
-        for f in self._download_dir.iterdir():
-            with suppress(OSError):
-                f.unlink()
+        dl = self._download_dir.resolve()
+        _guard_download_dir(dl)
+        dl.mkdir(parents=True, exist_ok=True)
+        # Clear only expected export files — pattern-scoped so unrelated files
+        # in DOWNLOAD_DIR are not deleted if the path is misconfigured.
+        for f in dl.iterdir():
+            if f.is_file() and f.suffix.lower() in {".csv", ".crdownload"}:
+                with suppress(OSError):
+                    f.unlink()
 
         try:
-            driver = _build_driver(self._download_dir)
+            driver = _build_driver(dl)
         except Exception as exc:
             raise SourceError("failed to launch browser") from exc
 
@@ -281,7 +301,7 @@ class PortalSource:
             _login(driver, wait, self._base_url, self._username, self._password)
             _apply_on_order_filter(driver, wait, self._base_url)
             _trigger_export(driver)
-            csv_path = _wait_for_csv(self._download_dir)
+            csv_path = _wait_for_csv(dl)
             return _parse_on_order_csv(csv_path)
         except SourceError:
             raise
