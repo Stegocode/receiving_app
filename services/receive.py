@@ -11,6 +11,10 @@ double-emission; mark_emitted is set only after the sink acknowledges.
 Claiming invariant: claim_and_save uses AND claimed_at IS NULL so a concurrent
 scan cannot steal an already-claimed row. Once claimed, the inventory_id is locked
 to this scan session (single-writer assumption — see boundary markers).
+
+Duplicate-scan invariant (T0-2): re-scanning an already-claimed barcode returns
+match_status='already_scanned' without saving or emitting — no spurious no_match
+is created on the board.
 """
 
 from __future__ import annotations
@@ -90,6 +94,41 @@ def _build_record(
     return from_dict(fields)
 
 
+def _build_already_scanned_record(
+    po_number: str,
+    claimed_row: dict,
+    barcode: str,
+    serial: str,
+) -> ReceivingRecord:
+    """Build a sentinel record for a duplicate scan of an already-claimed unit.
+
+    Not saved and not emitted — returned so the caller (scanner UI) can present a
+    distinct 'already scanned' signal without creating a no_match board item.
+    receiving_id is the same hash as the original successful scan for traceability.
+    """
+    inventory_id = claimed_row["inventory_id"]
+    return from_dict(
+        {
+            "truck": claimed_row.get("truck", ""),
+            "stop": claimed_row.get("stop", ""),
+            "sales_order": claimed_row.get("sales_order", ""),
+            "model_number": claimed_row.get("model_number", barcode),
+            "product_category": claimed_row.get("product_category", ""),
+            "product_size": claimed_row.get("product_size", {"w": 0, "d": 0, "h": 0}),
+            "quantity": claimed_row.get("quantity", 1),
+            "receiving_id": _make_receiving_id(po_number, inventory_id, barcode),
+            "timestamp": datetime.now().isoformat(),
+            "match_status": "already_scanned",
+            "purchase_order": po_number,
+            "inventory_id": inventory_id,
+            "serial": serial,
+            "brand": claimed_row.get("brand") or "",
+            "vendor": claimed_row.get("vendor") or "",
+            "tags": claimed_row.get("tags") or "",
+        }
+    )
+
+
 def process_scan(
     barcode: str,
     po_number: str,
@@ -104,9 +143,15 @@ def process_scan(
     claim_and_save commits both the claim and the record in a single transaction —
     a crash cannot leave a unit claimed without a corresponding record (T0-1).
 
+    Duplicate-scan path (T0-2): if no unclaimed candidate matches but the barcode
+    matches a claimed row for this PO, it is a re-scan of an already-received unit.
+    Returns match_status='already_scanned' without saving or emitting — no spurious
+    no_match appears on the board and the operator gets a distinct signal.
+
     No-match is an expected outcome (match_status='no_match'), not an exception.
     Step order: claim_and_save (match) or save_record (no-match) → was_emitted
     guard → sink call → mark_emitted → return.
+    Duplicate path exits early: no save, no emit, no mark_emitted.
     """
     candidates = repository.unclaimed_for_po(po_number)
     best_model, _ = find_best_match(barcode, [c["model_number"] for c in candidates])
@@ -116,6 +161,20 @@ def process_scan(
         if best_model
         else None
     )
+
+    if matched is None:
+        claimed = repository.claimed_for_po(po_number)
+        claimed_best, _ = find_best_match(barcode, [c["model_number"] for c in claimed])
+        if claimed_best:
+            dup_row = next(c for c in claimed if c["model_number"] == claimed_best)
+            logger.info(
+                "scan_duplicate barcode=%s po_number=%s inventory_id=%s",
+                barcode,
+                po_number,
+                dup_row["inventory_id"],
+            )
+            return _build_already_scanned_record(po_number, dup_row, barcode, serial)
+
     inventory_id = matched["inventory_id"] if matched else ""
     claimed_at = datetime.now().isoformat()
 

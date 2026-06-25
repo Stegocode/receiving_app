@@ -104,3 +104,35 @@ records; it never sets `match_status = "needs_attention"`. The branch that calls
 |-----------|-------------|
 | recv_br_44 | `if matched and best_model` → `if matched or best_model` — `matched` is produced by `next(...) if best_model else None`, so `matched` is `None` iff `best_model` is `None`; `and` and `or` are observably equivalent. |
 | recv_ps_13 | `next(..., None)` → `next(..., )` — default is unreachable: when `best_model` is truthy it was produced by `find_best_match` over the same candidates list, so the generator always yields a result before exhaustion. |
+| recv_dup_br_1 | `claimed_row.get("model_number", barcode)` → `…get("model_number", None)` — default unreachable: `claimed_row` is the dict returned by `claimed_for_po` and was located via `find_best_match(…, [c["model_number"] …])`, so it always has `"model_number"`. The `barcode` fallback is defensive dead code. |
+| recv_dup_br_2 | `claimed_row.get("model_number", barcode)` → `…get("model_number", )` — same reasoning as recv_dup_br_1; default argument omitted but also unreachable. |
+
+---
+
+## T0-2 additions: scan_duplicate log-line in services/receive.py
+
+The early-return path for an already-scanned unit contains one `logger.info(...)` call:
+
+```python
+logger.info(
+    "scan_duplicate barcode=%s po_number=%s inventory_id=%s",
+    barcode, po_number, dup_row["inventory_id"],
+)
+return _build_already_scanned_record(po_number, dup_row, barcode, serial)
+```
+
+All mutations on this log call (format-string → garbled/None, positional args → None/removed)
+are accepted equivalent mutants — the early `return` on the next line is what matters
+behaviorally; the log line only affects rotating-file output.
+
+**Category A (format-string garbled):** `recv_dup_3`, `recv_dup_4`
+(`"scan_duplicate …"` → `"XXscan_duplicateXX"` / `"SCAN_DUPLICATE …"`)
+
+**Category B (first arg → None):** `recv_dup_1`
+(`"scan_duplicate …"` → `None`)
+
+**Category B (positional args → None):** `recv_dup_2`, `recv_dup_5`, `recv_dup_6`
+(`barcode` / `po_number` / `dup_row["inventory_id"]` → `None`)
+
+**Category A (args removed):** `recv_dup_7`, `recv_dup_8`, `recv_dup_9`, `recv_dup_10`
+(format string or individual arg lines deleted)

@@ -38,6 +38,14 @@ class FakeRepository:
             if item["purchase_order"] == po_number and item.get("claimed_at") is None
         ]
 
+    def claimed_for_po(self, po_number: str) -> list[dict]:
+        """Return claimed rows for the given PO (claimed_at IS NOT NULL)."""
+        return [
+            dict(item)
+            for item in self._po_items.values()
+            if item["purchase_order"] == po_number and item.get("claimed_at") is not None
+        ]
+
     def claim(self, inventory_id: str, claimed_at: str) -> None:
         """Atomically mark a row claimed. No-op if already claimed (matches SQL AND guard)."""
         item = self._po_items.get(inventory_id)

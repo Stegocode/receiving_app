@@ -13,7 +13,7 @@ from core.errors import ValidationError
 
 SCHEMA_VERSION = 2
 
-_VALID_MATCH_STATUSES = {"received", "no_match", "needs_attention"}
+_VALID_MATCH_STATUSES = {"received", "no_match", "needs_attention", "already_scanned"}
 _STR_FIELDS = (
     "truck",
     "stop",
@@ -47,7 +47,7 @@ class ReceivingRecord:
     quantity: int
     receiving_id: str  # stable idempotency key
     timestamp: str  # ISO-8601
-    match_status: str  # "received" | "no_match" | "needs_attention"
+    match_status: str  # "received" | "no_match" | "needs_attention" | "already_scanned"
     purchase_order: str
     inventory_id: str
     serial: str = ""  # serial number scanned with the physical unit

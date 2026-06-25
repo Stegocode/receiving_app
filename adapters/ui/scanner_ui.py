@@ -300,6 +300,9 @@ class ReceivingUI:
         elif outcome.status == "no_match":
             self._log(f"NO MATCH  PO:{rec.purchase_order}")
             self._set_no_match()
+        elif outcome.status == "already_scanned":
+            self._log(f"ALREADY SCANNED  PO:{rec.purchase_order}  Model:{rec.model_number}")
+            scan_states.set_already_scanned(self, rec)
         else:
             self._log(f"PRINT FAILED  PO:{rec.purchase_order}  Model:{rec.model_number}")
             self._set_print_failed(rec)

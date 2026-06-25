@@ -103,6 +103,19 @@ class SQLiteRepository:
         except sqlite3.Error as exc:
             raise RepositoryError(f"unclaimed_for_po failed — {exc}") from exc
 
+    def claimed_for_po(self, po_number: str) -> list[dict]:
+        """Return po_inventory rows for the PO that have already been claimed."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "SELECT * FROM po_inventory"
+                    " WHERE purchase_order = ? AND claimed_at IS NOT NULL",
+                    (po_number,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"claimed_for_po failed — {exc}") from exc
+
     def claim(self, inventory_id: str, claimed_at: str) -> None:
         """Atomically mark one po_inventory row as claimed.
 

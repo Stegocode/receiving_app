@@ -80,6 +80,8 @@ pytest_add_cli_args_test_selection = [
     "tests/test_logging_setup.py",
     "tests/test_sync.py",
     "tests/test_receive.py",
+    "tests/test_receive_already_scanned.py",
+    "tests/test_receive_atomicity.py",
     "tests/test_receive_sync.py",
     "tests/test_populate.py",
     "tests/test_refresh.py",

@@ -190,12 +190,15 @@ def test_claiming_n_units_same_model_returns_n_distinct_inventory_ids() -> None:
     assert len(sink.emitted) == N
 
 
-def test_claiming_n_plus_one_scan_finds_nothing() -> None:
-    """After N claims exhaust the catalog, the (N+1)th scan is a no_match.
+def test_claiming_n_plus_one_scan_returns_already_scanned() -> None:
+    """After N claims exhaust the catalog, the (N+1)th scan is already_scanned (T0-2).
 
-    Mutation kill target: any mutation that uses get_purchase_order (which returns ALL rows
-    including claimed ones) instead of unclaimed_for_po → the (N+1)th scan finds a match
-    and this assertion fails.
+    The barcode still matches claimed rows for the PO, so it is recognised as a
+    duplicate scan of an already-received unit — not a genuine no_match.
+
+    Mutation kill target: removing the claimed_for_po / already_scanned check causes
+    the (N+1)th scan to fall through to the no_match path, changing match_status to
+    'no_match' and failing the assertion.
     """
     N = 2
     repo = FakeRepository()
@@ -206,11 +209,13 @@ def test_claiming_n_plus_one_scan_finds_nothing() -> None:
     for _ in range(N):
         process_scan("MODEL-A", "PO-001", repo, sink)
 
-    # (N+1)th scan — all units claimed
+    # (N+1)th scan — all units claimed; barcode matches claimed rows → already_scanned
     record = process_scan("MODEL-A", "PO-001", repo, sink)
-    assert record.match_status == "no_match", (
-        "expected no_match when all units are claimed, but got a match"
+    assert record.match_status == "already_scanned", (
+        f"expected already_scanned when all units are claimed, but got '{record.match_status}'"
     )
+    # No new emit — board is not polluted
+    assert len(sink.emitted) == N
 
 
 def test_claiming_does_not_affect_other_models_on_same_po() -> None:
