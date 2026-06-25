@@ -5,6 +5,12 @@ why, and the signal that should trigger resolving it.
 
 ---
 
+CANONICAL SOURCE OF TRUTH: DEBT.md is the single authoritative record of deferred/known issues for
+this repo. If another planning doc or audit disagrees with DEBT.md, DEBT.md wins and the other doc is
+updated to match. Every confirmed deferred issue lands here.
+
+---
+
 [DEBT-T01] 2026-06-17 — Skeleton only, no logic.
 All .py files in this commit are stubs. Business logic, port implementations,
 and tests are implemented in T-02 through T-14.
@@ -160,3 +166,27 @@ The routing was corrected in the prior PR (items route to READY on the board); t
 name was deliberately left unchanged to avoid a broad rename mid-sprint.
 Rename received → ready in a dedicated cleanup PR to align with the domain meaning.
 Trigger: any refactor that touches match_status or the scan/receive state machine.
+
+[DEBT-BOARD-001] 2026-06-23 — board.mark_received is a NON-ATOMIC two-call sequence.
+adapters/board.py mark_received() issues two separate API mutations: move_item_to_group (to the
+RECEIVED group), THEN change_column_value (set status to RECEIVED). If the second call fails, the
+item sits in the RECEIVED group with a blank/wrong status and nothing reconciles it. This is the same
+partial-write class that was fixed at the DB layer by claim_and_save (T0-1/DEBT-ATOMICITY-001), but
+it is unaddressed at the board boundary. The board is the operational ledger, so a half-applied
+mark_received leaves a visibly-wrong row. Fix options: combine into a single mutation if the board
+API supports moving + setting status atomically; OR set status FIRST then move (so a failure leaves
+the item in its prior group with correct status, which is more recoverable than RECEIVED-with-blank);
+OR add a reconciliation pass that detects RECEIVED-group items with missing status. Trigger: before
+relying on board state as the authoritative received-ledger, or first observed half-applied row.
+
+[DEBT-MATCH-001] 2026-06-23 — identical-model rows may under-claim under concurrent scanners.
+In services/receive.py process_scan, after find_best_match returns a model, the matched row is chosen
+via next((c for c in candidates if c["model_number"] == best_model), None) — it always takes the
+FIRST matching unclaimed row. For a single scanner this is fine: each claim removes that row from
+unclaimed_for_po, so the next scan of the same model finds the next row. The risk is CONCURRENT
+scanners: two scanners reading unclaimed_for_po before either claims could both select the same first
+row, and the AND claimed_at IS NULL guard means the second claim silently no-ops — under-receiving by
+one unit with no error surfaced. Masked today by single-scanner staging. Fix: have the claim path
+detect a no-op claim (zero rows updated) and retry against the next unclaimed row, or select+lock a
+distinct row per scan. Related: DEBT-T16.1-001 (WAL/concurrent-writer). Trigger: before running more
+than one scanner against the same PO concurrently.
