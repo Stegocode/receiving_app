@@ -141,6 +141,26 @@ dev values when validating a new install without live credentials (see
 
 > `PRINTER_TYPE` accepts only `preview` or `zebra` — there is no `fake` value for the printer.
 
+**Secret handling**
+
+The `.env` file contains credentials that grant access to live systems. Apply
+these practices before deploying:
+
+- **Restrict file permissions.** On Unix/macOS: `chmod 600 .env`. On Windows,
+  use Properties → Security to restrict read access to the current user only.
+- **Use least-privilege accounts.** `SOURCE_USERNAME` / `SOURCE_PASSWORD`
+  needs only read access to open purchase orders. `SINK_API_TOKEN` needs only
+  write access to the receiving board groups. Do not use an admin account or a
+  token with broader permissions than required.
+- **Rotate credentials on a schedule.** Treat `SOURCE_PASSWORD` and
+  `SINK_API_TOKEN` as short-lived. Rotate them according to your organisation's
+  policy and immediately on any suspected exposure.
+- **Never commit `.env` to version control.** Enforced by `.gitignore` and the
+  conformance gate (`gate_j`). The `.env.example` template (committed, no real
+  values) is the safe reference for what variables are required.
+
+---
+
 **Optional settings** (defaults shown):
 
 | Setting | Default | What it is |

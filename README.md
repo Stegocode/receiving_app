@@ -17,6 +17,44 @@ utility, and a headless receiving robot.
 | Warehouse or office operator | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
 | Developer working on the code | [docs/FOR_DEVELOPERS.md](docs/FOR_DEVELOPERS.md) |
 | Contributor | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Unfamiliar with terms | [docs/GLOSSARY.md](docs/GLOSSARY.md) |
+
+---
+
+## What problem does this solve?
+
+Warehouse receiving is repetitive, sequential, and error-prone when done
+manually. For every inbound item an operator must: look up the unit in an
+upstream purchase order portal, navigate a multi-step receiving wizard to
+confirm receipt, post the outcome to a shared tracking board, and print a label
+— one unit at a time. At volume this creates three concrete problems:
+
+1. **Double-receives.** Without an atomic claim on each inventory slot, the same
+   unit can be received twice if two operators scan simultaneously or a scan is
+   retried after a crash.
+
+2. **Portal latency per scan.** A live portal query on every barcode scan ties
+   throughput to network and portal response time.
+
+3. **Robot failures that corrupt board state.** A headless automation that keeps
+   retrying after a high error rate can move dozens of items to the wrong board
+   group before anyone notices.
+
+**What this application provides over a fully manual workflow:**
+
+| Problem | This app's answer |
+|---|---|
+| Double-receives | `claim_and_save` writes the claim and the record in one transaction; `AND claimed_at IS NULL` prevents concurrent races |
+| Portal latency | Morning catalog refresh builds a local SQLite snapshot; desk scanning never hits the portal at scan time |
+| Robot runaway errors | Circuit breaker halts after < 50 % success rate over 5+ attempts; logs `robot_kill` with counts |
+| Crash/retry duplicates | SHA-256 `receiving_id` key makes every record idempotent; repeated posts are silent no-ops |
+| Live credentials required for development | Fake adapters cover all I/O boundaries; the full flow runs offline with `*_TYPE=fake` |
+
+**Honest trade-offs.** The portal adapters use browser automation (Selenium for
+catalog scraping, Playwright for the receiving wizard) against a portal that
+exposes no public API. Browser automation is fragile: portal layout changes can
+break the adapters. When the portal offers a stable API, replacing the browser
+adapters with API clients is the right long-term path (tracked in `DEBT.md`).
 
 ---
 
@@ -101,3 +139,11 @@ DEBT.md             deferred decisions ledger
 
 See [docs/RUNBOOK.md](docs/RUNBOOK.md) for the quick daily reference card once
 you are set up.
+
+---
+
+## Visuals
+
+Screenshots and diagrams live in [docs/images/](docs/images/). See
+[docs/images/README.md](docs/images/README.md) for a description of what each
+image should show and instructions for contributors adding or updating visuals.
