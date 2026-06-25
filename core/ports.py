@@ -32,6 +32,9 @@ class Repository(Protocol):
     match_status='received'. Returns None when no such unit exists. Used by the
     duplicate-scan detection path (T0-2) to identify re-scans of a specific physical
     unit via its serial number, without being fooled by adjacent or fuzzy SKUs.
+    save_barcode_mapping upserts an exact raw_barcode → confirmed model_number mapping.
+    lookup_barcode_mapping returns the confirmed model_number for an EXACT raw_barcode
+    match (byte-for-byte string equality), or None when no mapping exists. Never fuzzy.
     """
 
     def get_purchase_order(self, po_number: str) -> list[dict]: ...
@@ -50,6 +53,12 @@ class Repository(Protocol):
     def claim_and_save(
         self, inventory_id: str, claimed_at: str, record: ReceivingRecord
     ) -> None: ...
+
+    def save_barcode_mapping(
+        self, raw_barcode: str, model_number: str, fuzzy_score: float, source: str
+    ) -> None: ...
+
+    def lookup_barcode_mapping(self, raw_barcode: str) -> str | None: ...
 
 
 @runtime_checkable
