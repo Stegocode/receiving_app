@@ -6,6 +6,7 @@ May import: core.schema, core.errors, core.ports.
 
 from __future__ import annotations
 
+import enum
 import logging
 
 from core.ports import PurchaseOrderSource, Repository
@@ -13,14 +14,22 @@ from core.ports import PurchaseOrderSource, Repository
 logger = logging.getLogger(__name__)
 
 
-def refresh_all(source: PurchaseOrderSource, repository: Repository, confirmed: bool) -> None:
+class RefreshResult(enum.Enum):
+    SUCCESS = "success"  # DB replaced with non-empty fetch
+    CANCELLED = "cancelled"  # confirmed=False; DB never touched
+    EMPTY_ABORT = "empty_abort"  # source returned []; DB never touched
+
+
+def refresh_all(
+    source: PurchaseOrderSource, repository: Repository, confirmed: bool
+) -> RefreshResult:
     """Fetch-then-replace po_inventory from source.
 
     Safety contract:
-      - confirmed=False  → no-op; caller (entry point) owns the prompt.
+      - confirmed=False  → CANCELLED; caller (entry point) owns the prompt.
       - fetch raises     → exception propagates; DB is never touched.
-      - fetch returns [] → safety-stop logged; DB is never touched.
-      - non-empty fetch  → replace_po_items() wipes and reloads atomically.
+      - fetch returns [] → EMPTY_ABORT logged; DB is never touched.
+      - non-empty fetch  → replace_po_items() wipes and reloads atomically → SUCCESS.
 
     PASS criterion: after a successful call, count_po_items() == len(fetched rows).
     KILL criterion: a fetch failure must never leave the catalog empty.
@@ -28,7 +37,7 @@ def refresh_all(source: PurchaseOrderSource, repository: Repository, confirmed: 
     """
     if not confirmed:
         logger.info("refresh_aborted reason=not_confirmed")
-        return
+        return RefreshResult.CANCELLED
 
     items = source.fetch_all_open_orders()
 
@@ -36,7 +45,7 @@ def refresh_all(source: PurchaseOrderSource, repository: Repository, confirmed: 
         logger.warning(
             "refresh_aborted reason=empty_fetch — source returned no rows; DB not modified"
         )
-        return
+        return RefreshResult.EMPTY_ABORT
 
     before = repository.count_po_items()
     logger.info("refresh_start items_before=%d", before)
@@ -45,3 +54,4 @@ def refresh_all(source: PurchaseOrderSource, repository: Repository, confirmed: 
 
     after = repository.count_po_items()
     logger.info("refresh_complete items_before=%d items_after=%d", before, after)
+    return RefreshResult.SUCCESS

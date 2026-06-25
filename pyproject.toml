@@ -86,6 +86,7 @@ pytest_add_cli_args_test_selection = [
     "tests/test_receive_sync.py",
     "tests/test_populate.py",
     "tests/test_refresh.py",
+    "tests/test_refresh_runner.py",
 ]
 
 [tool.importlinter]

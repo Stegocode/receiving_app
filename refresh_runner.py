@@ -8,11 +8,31 @@ May import: config, core.logging_setup, adapters.db, adapters.source, services.r
 
 from __future__ import annotations
 
+import sys
+
 import config
 from adapters.db import SQLiteRepository
 from adapters.source import make_source
 from core.logging_setup import setup_logging
-from services.refresh import refresh_all
+from services.refresh import RefreshResult, refresh_all
+
+_EXIT_CODES: dict[RefreshResult, int] = {
+    RefreshResult.SUCCESS: 0,
+    RefreshResult.CANCELLED: 1,
+    RefreshResult.EMPTY_ABORT: 2,
+}
+
+
+def _execute(source: object, repo: object, confirmed: bool) -> int:
+    """Run the refresh and print a status message; return the exit code."""
+    result = refresh_all(source, repo, confirmed=confirmed)  # type: ignore[arg-type]
+    if result is RefreshResult.SUCCESS:
+        print(f"Refresh complete — {repo.count_po_items()} items in catalog.")  # type: ignore[attr-defined]
+    elif result is RefreshResult.CANCELLED:
+        print("Refresh cancelled.")
+    else:
+        print("Refresh aborted — source returned no rows; catalog was not modified.")
+    return _EXIT_CODES[result]
 
 
 def main() -> None:
@@ -37,12 +57,7 @@ def main() -> None:
         fake_data_path=config.FAKE_SOURCE_DATA,
     )
 
-    refresh_all(source, repo, confirmed=confirmed)
-
-    if confirmed:
-        print(f"Refresh complete — {repo.count_po_items()} items in catalog.")
-    else:
-        print("Refresh cancelled.")
+    sys.exit(_execute(source, repo, confirmed=confirmed))
 
 
 if __name__ == "__main__":
