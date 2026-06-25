@@ -89,6 +89,7 @@ pytest_add_cli_args_test_selection = [
     "tests/test_refresh_runner.py",
     "tests/test_scanner_ui_logic.py",
     "tests/test_barcode_map.py",
+    "tests/test_config_dotenv_search.py",
 ]
 
 [tool.importlinter]
