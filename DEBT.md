@@ -86,11 +86,27 @@ run with real credentials and RECEIVE_LOCATION / RECEIVE_WHSE_LOCATION in a loca
 [DEBT-T14-001] 2026-06-21 — receive_sync is unit-tested with fakes; integrated robot is live-untested.
 services/receive_sync.py is fully covered by FakeBoard + FakeReceiver. The integrated robot
 (real ReceivingBoard + real PortalReceiver + live portal + live board) has never been run end-to-end.
-Additionally: RECEIVE_KILL_THRESHOLD (0.5) and MIN_ATTEMPTS_BEFORE_KILL (5) are untuned guesses —
-validate and tune against real failure patterns on the first live run.
+NOTE (T1-4a 2026-06-24): RECEIVE_KILL_THRESHOLD and MIN_ATTEMPTS_BEFORE_KILL replaced by
+consecutive-failure escalation (CONSECUTIVE_FAILURE_KILL=2 — see DEBT-T1-4a-001). That threshold
+is itself untuned.
 DB reconciliation (cleaning up RECEIVED rows from the local SQLite store after a successful portal
 receive) is also deferred — currently out of scope for the orchestrator.
 Trigger: first live run of the full receiving robot with real credentials and a populated READY group.
+
+[DEBT-T1-4a-001] 2026-06-24 — CONSECUTIVE_FAILURE_KILL=2 is untuned.
+The 2-consecutive-failure kill threshold is an initial guess based on domain knowledge that one
+failure is almost always transient (page not ready) and two in a row is almost certainly a systemic
+automation problem. Validate and tune against real live-run failure patterns before relying on it
+as an operational control. Trigger: first live run of the robot with a populated READY group and
+real portal credentials.
+
+[DEBT-T1-4a-002] 2026-06-24 — SyncStatusSQLiteStore._ensure_schema duplicates schema/0004_sync_status.sql.
+adapters/db.py is at the 400-line gate_e limit, preventing the shared migration runner from being
+extended to cover sync_status. SyncStatusSQLiteStore uses its own CREATE TABLE IF NOT EXISTS
+directly. The schema definition is therefore declared twice (once in the SQL migration file, once in
+the Python adapter). Resolve by splitting db.py when the Postgres migration is tackled
+(DEBT-T15-003) and unifying both entry-points under a single migration runner.
+Trigger: db.py split / Postgres migration work begins.
 
 [DEBT-T09-001] 2026-06-19 — LIVE-VERIFIED 2026-06-22 — `adapters/sink.py` sink adapter verified live against the real board.
 All group IDs and column IDs confirmed. create_item accepted by the board API; items

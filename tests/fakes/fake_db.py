@@ -1,9 +1,9 @@
 """
-Owns: in-memory dict-based Repository fake for use in tests.
+Owns: in-memory fakes for Repository and SyncStatusStore ports, for use in tests.
 Must not: touch SQLite or any real persistence.
 May import: core.ports, core.schema, core.errors.
 """
-# Owns: in-memory dict-based Repository fake for use in tests.
+# Owns: in-memory fakes for Repository and SyncStatusStore ports, for use in tests.
 # Must not: touch SQLite or any real persistence.
 # May import: core.ports, core.schema, core.errors.
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from core.errors import RepositoryError
-from core.schema import ReceivingRecord
+from core.schema import ReceivingRecord, SyncStatusRecord
 
 
 class FakeRepository:
@@ -180,3 +180,22 @@ class FakeRepository:
     def lookup_barcode_mapping(self, raw_barcode: str) -> str | None:
         entry = self._barcode_map.get(raw_barcode)
         return entry["model_number"] if entry else None
+
+
+class FakeSyncStatusStore:
+    """In-memory SyncStatusStore for tests.
+
+    write_sync_status appends to .writes and updates ._record.
+    read_sync_status returns the last written record, or None before any write.
+    """
+
+    def __init__(self) -> None:
+        self._record: SyncStatusRecord | None = None
+        self.writes: list[SyncStatusRecord] = []
+
+    def write_sync_status(self, record: SyncStatusRecord) -> None:
+        self._record = record
+        self.writes.append(record)
+
+    def read_sync_status(self) -> SyncStatusRecord | None:
+        return self._record

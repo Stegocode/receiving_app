@@ -193,6 +193,24 @@ class BoardApiAdapter:
         self._post(_MUTATION_MOVE, {"itemId": item_id, "groupId": self._no_match_group_id})
         logger.info(json.dumps({"event": "board_mark_no_match", "item_id": item_id}))
 
+    def mark_needs_attention(self, item_id: str) -> None:
+        """Set item status column to NEEDS_ATTENTION; no group move.
+
+        The board's automation routes the item based on the status value.
+        The robot never moves groups on executor failure — board logic handles routing.
+        Raises BoardError on failure.
+        """
+        self._post(
+            _MUTATION_SET_STATUS,
+            {
+                "boardId": self._board_id,
+                "itemId": item_id,
+                "colId": self._status_col,
+                "value": json.dumps({"label": "NEEDS_ATTENTION"}),
+            },
+        )
+        logger.info(json.dumps({"event": "board_mark_needs_attention", "item_id": item_id}))
+
 
 # ── In-memory fake board ──────────────────────────────────────────────────────
 
@@ -209,6 +227,7 @@ class FakeBoard:
         self._ready: list[dict] = list(ready_items or [])
         self.received: list[str] = []
         self.no_match: list[str] = []
+        self.needs_attention: list[str] = []
 
     def poll_ready(self) -> list[dict]:
         return list(self._ready)
@@ -218,6 +237,9 @@ class FakeBoard:
 
     def mark_no_match(self, item_id: str) -> None:
         self.no_match.append(item_id)
+
+    def mark_needs_attention(self, item_id: str) -> None:
+        self.needs_attention.append(item_id)
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

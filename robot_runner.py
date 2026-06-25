@@ -2,12 +2,12 @@
 Owns: robot entry point — poll loop for the receiving robot.
 Must not: contain domain logic; must not be imported by services or adapters.
 May import: config, core.logging_setup, adapters.board, adapters.receiver,
-            services.receive_sync, core.errors.
+            adapters.sync_status_db, services.receive_sync, core.errors.
 """
 # Owns: robot entry point — poll loop.
 # Must not: contain domain logic; must not be imported by services or adapters.
 # May import: config, core.logging_setup, adapters.board, adapters.receiver,
-#             services.receive_sync, core.errors.
+#             adapters.sync_status_db, services.receive_sync, core.errors.
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import time
 import config
 from adapters.board import make_board
 from adapters.receiver import make_receiver
+from adapters.sync_status_db import SyncStatusSQLiteStore
 from core.errors import SyncKillError
 from core.logging_setup import setup_logging
 from services import receive_sync
@@ -42,6 +43,7 @@ def main() -> None:
         serial_col=config.SINK_SERIAL_COL,
         status_col=config.SINK_STATUS_COL,
     )
+    sync_store = SyncStatusSQLiteStore()
 
     _log.info("robot_start poll_interval_secs=%d", config.POLL_INTERVAL_SECS)
 
@@ -56,7 +58,7 @@ def main() -> None:
             screenshot_dir=config.RECEIVE_SCREENSHOT_DIR,
         )
         try:
-            result = receive_sync.receive_pending(board, executor)
+            result = receive_sync.receive_pending(board, executor, sync_store)
             _log.info(
                 "pass_complete rcvd=%d no_match=%d failed=%d skipped=%d",
                 result.received,
@@ -70,8 +72,6 @@ def main() -> None:
         except KeyboardInterrupt:
             _log.info("robot_shutdown")
             break
-        except Exception:
-            _log.exception("robot_pass_error")
         finally:
             executor.close()
         try:

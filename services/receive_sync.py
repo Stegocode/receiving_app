@@ -1,27 +1,35 @@
 """
 Owns: receive loop — poll the board, drive the executor for each ready item, route
-      outcomes, trip the circuit breaker.
+      outcomes, apply consecutive-failure escalation policy.
 Must not: import concrete adapters; read environment variables; sleep or loop forever.
-May import: core.errors, core.ports.
+May import: core.errors, core.ports, core.schema.
 
 PASS criteria:    failed == 0 and no_match == 0 — all items received without error.
-PARTIAL criteria: (failed > 0 or no_match > 0) and no kill triggered — completes, logs warnings.
-KILL criteria:    received / attempted < RECEIVE_KILL_THRESHOLD after MIN_ATTEMPTS_BEFORE_KILL
-                  attempted — SyncKillError raised immediately; remaining items left in READY.
+PARTIAL criteria: failed > 0 or no_match > 0, no kill triggered — loop completed with warnings.
+KILL criteria:    consecutive_failures >= CONSECUTIVE_FAILURE_KILL (2) with no success between
+                  — SyncKillError raised immediately; both failing items set to needs_attention.
+
+not_measured: live portal timing, real board API mutations, real browser behavior,
+              CONSECUTIVE_FAILURE_KILL threshold tuning against live failure patterns.
+              See DEBT.md [DEBT-T14-001, DEBT-T1-4a-001].
+
+Boundary: single-writer; consecutive_failures counter is per-run (starts at 0, not persisted).
+          Manual recovery: operator sets item status back to 'ready' to re-feed.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from core.errors import ExecutorError, SyncKillError
-from core.ports import ReceivingBoard, ReceivingExecutor
+from core.ports import ReceivingBoard, ReceivingExecutor, SyncStatusStore
+from core.schema import SyncStatusRecord
 
 logger = logging.getLogger(__name__)
 
-RECEIVE_KILL_THRESHOLD = 0.5
-MIN_ATTEMPTS_BEFORE_KILL = 5
+CONSECUTIVE_FAILURE_KILL = 2
 
 
 @dataclass
@@ -29,8 +37,8 @@ class ReceiveResult:
     """Operational counters for a single receive pass.
 
     attempted = received + no_match + failed; skipped items never reached the executor.
-    not_measured: live portal/board integration, real browser timing, breaker
-                  threshold tuning (see DEBT-T14-001).
+    not_measured: live portal/board integration, real browser timing, escalation threshold
+                  tuning (see DEBT.md [DEBT-T14-001, DEBT-T1-4a-001]).
     """
 
     received: int
@@ -44,14 +52,45 @@ def _is_valid(item: dict) -> bool:
     return all(item.get(k) for k in ("item_id", "po_number", "inventory_id", "model", "serial"))
 
 
-def receive_pending(board: ReceivingBoard, executor: ReceivingExecutor) -> ReceiveResult:
+def _write_status(
+    store: SyncStatusStore,
+    state: str,
+    last_outcome: str,
+    consecutive_failures: int,
+    stopped_reason: str,
+) -> None:
+    store.write_sync_status(
+        SyncStatusRecord(
+            state=state,
+            last_outcome=last_outcome,
+            consecutive_failures=consecutive_failures,
+            stopped_reason=stopped_reason,
+            updated_at=datetime.now(UTC).isoformat(),
+        )
+    )
+
+
+def receive_pending(
+    board: ReceivingBoard,
+    executor: ReceivingExecutor,
+    sync_status: SyncStatusStore,
+) -> ReceiveResult:
     """Poll READY items and drive the executor for each.
 
-    Returns ReceiveResult on PASS or PARTIAL. Raises SyncKillError on KILL.
+    PASS:    failed == 0 and no_match == 0 — all items received.
+    PARTIAL: failed > 0 or no_match > 0, no kill — loop completed with warnings.
+    KILL:    consecutive_failures >= CONSECUTIVE_FAILURE_KILL — SyncKillError raised;
+             both failing items marked needs_attention before raise.
+
+    not_measured: live portal timing, real board mutations, real browser behavior,
+                  CONSECUTIVE_FAILURE_KILL threshold tuning. See DEBT.md [DEBT-T14-001,
+                  DEBT-T1-4a-001].
     """
     items = board.poll_ready()
     received = no_match = failed = skipped = 0
+    consecutive_failures = 0
     logger.info("receive_loop_start ready=%d", len(items))
+    _write_status(sync_status, "running", "none", 0, "")
 
     for item in items:
         if not _is_valid(item):
@@ -59,10 +98,7 @@ def receive_pending(board: ReceivingBoard, executor: ReceivingExecutor) -> Recei
             if item_id:
                 board.mark_no_match(item_id)
             skipped += 1
-            logger.warning(
-                "receive_invalid_item item_id=%s",
-                item.get("item_id", "unknown"),
-            )
+            logger.warning("receive_invalid_item item_id=%s", item.get("item_id", "unknown"))
             continue
 
         item_id = item["item_id"]
@@ -76,21 +112,37 @@ def receive_pending(board: ReceivingBoard, executor: ReceivingExecutor) -> Recei
             else:
                 board.mark_no_match(item_id)
                 no_match += 1
+            consecutive_failures = 0
+            _write_status(sync_status, "running", "success", 0, "")
         except ExecutorError as exc:
+            board.mark_needs_attention(item_id)
+            consecutive_failures += 1
             failed += 1
-            logger.warning("receive_executor_error item_id=%s error=%s", item_id, exc)
-
-        attempted = received + no_match + failed
-        if (
-            attempted >= MIN_ATTEMPTS_BEFORE_KILL
-            and (received / attempted) < RECEIVE_KILL_THRESHOLD
-        ):
-            logger.error("receive_loop_kill rcvd=%d attempted=%d", received, attempted)
-            raise SyncKillError(
-                f"receive aborted — {received}/{attempted} received, below "
-                f"{RECEIVE_KILL_THRESHOLD:.0%}; remaining items left READY"
+            logger.warning(
+                "receive_executor_error item_id=%s consecutive_failures=%d error=%s",
+                item_id,
+                consecutive_failures,
+                exc,
             )
+            if consecutive_failures >= CONSECUTIVE_FAILURE_KILL:
+                reason = (
+                    f"{consecutive_failures} consecutive executor failures — "
+                    "resolve automation issue before retrying"
+                )
+                _write_status(sync_status, "stopped", "kill", consecutive_failures, reason)
+                logger.error(
+                    "receive_loop_kill consecutive_failures=%d item_id=%s",
+                    consecutive_failures,
+                    item_id,
+                )
+                raise SyncKillError(
+                    f"receive aborted — {consecutive_failures} consecutive executor failures; "
+                    "items set to needs_attention; resolve automation issue before retrying"
+                ) from exc
+            _write_status(sync_status, "running", "failure", consecutive_failures, "")
 
+    last_outcome = "failure" if failed > 0 else "success"
+    _write_status(sync_status, "stopped", last_outcome, consecutive_failures, "")
     if failed == 0 and no_match == 0:
         logger.info("receive_loop_complete rcvd=%d skipped=%d", received, skipped)
     else:

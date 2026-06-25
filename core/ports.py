@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal, Protocol, runtime_checkable
 
-from core.schema import ReceivingRecord
+from core.schema import ReceivingRecord, SyncStatusRecord
 
 ReceiveOutcome = Literal["received", "not_found", "finalize_error"]
 
@@ -151,3 +151,17 @@ class ReceivingBoard(Protocol):
     def poll_ready(self) -> list[dict]: ...
     def mark_received(self, item_id: str) -> None: ...
     def mark_no_match(self, item_id: str) -> None: ...
+    def mark_needs_attention(self, item_id: str) -> None: ...
+
+
+@runtime_checkable
+class SyncStatusStore(Protocol):
+    """Audit-trail port for robot sync state.
+
+    Single-row semantics: write_sync_status upserts on id=1; read_sync_status
+    returns the last written record, or None if no run has started.
+    Raises RepositoryError on any persistence failure.
+    """
+
+    def write_sync_status(self, record: SyncStatusRecord) -> None: ...
+    def read_sync_status(self) -> SyncStatusRecord | None: ...

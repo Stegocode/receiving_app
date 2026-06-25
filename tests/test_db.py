@@ -57,12 +57,13 @@ def _item(**kwargs) -> dict:
 # ── Migration runner ──────────────────────────────────────────────────────────
 
 
-def test_migration_runner_fresh_db_reaches_version_3_with_all_columns(tmp_path):
-    """Fresh DB applies 0001, 0002, and 0003 migrations; user_version==3.
+def test_migration_runner_fresh_db_reaches_version_4_with_all_columns(tmp_path):
+    """Fresh DB applies 0001–0004 migrations; user_version==4.
 
-    Checks columns from 0002 (po_inventory.claimed_at, receiving_items.serial)
-    and table from 0003 (barcode_model_map) — kills any mutation that drops a
-    migration file or its DDL statements.
+    Schema/0002 columns (po_inventory.claimed_at, receiving_items.serial),
+    schema/0003 table (barcode_model_map), and schema/0004 table (sync_status)
+    must all be present — kills any mutation that drops a migration file or one
+    of the ALTER TABLE / CREATE TABLE statements.
     """
     db_path = tmp_path / "test.db"
     SQLiteRepository(db_path=db_path)
@@ -73,12 +74,14 @@ def test_migration_runner_fresh_db_reaches_version_3_with_all_columns(tmp_path):
         bm_cols = [
             row[1] for row in conn.execute("PRAGMA table_info(barcode_model_map)").fetchall()
         ]
-    assert version == 3
+        ss_cols = [row[1] for row in conn.execute("PRAGMA table_info(sync_status)").fetchall()]
+    assert version == 4
     assert "claimed_at" in po_cols, "po_inventory.claimed_at missing — 0002 migration not applied"
     assert "serial" in ri_cols, "receiving_items.serial missing — 0002 migration not applied"
     assert "raw_barcode" in bm_cols, (
         "barcode_model_map.raw_barcode missing — 0003 migration not applied"
     )
+    assert "consecutive_failures" in ss_cols, "sync_status missing — 0004 migration not applied"
 
 
 def test_migration_runner_idempotent(tmp_path):
@@ -87,7 +90,7 @@ def test_migration_runner_idempotent(tmp_path):
     SQLiteRepository(db_path=db_path)  # second construction — no-op
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 3
+    assert version == 4
 
 
 def test_migration_runner_applies_0002_fixture(tmp_path, monkeypatch):

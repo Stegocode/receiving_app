@@ -1,5 +1,5 @@
 """
-Owns: ReceivingRecord dataclass and SCHEMA_VERSION constant.
+Owns: ReceivingRecord, SyncStatusRecord dataclasses and SCHEMA_VERSION constant.
 Must not: perform any I/O; must not import adapters or services.
 May import: stdlib, core.errors.
 """
@@ -12,6 +12,28 @@ from datetime import datetime
 from core.errors import ValidationError
 
 SCHEMA_VERSION = 2
+
+_VALID_SYNC_STATES = {"running", "stopped"}
+_VALID_SYNC_LAST_OUTCOMES = {"none", "success", "failure", "kill"}
+
+
+@dataclass
+class SyncStatusRecord:
+    """Operational state of the robot receive loop — single-row audit record.
+
+    Written to sync_status (id=1) on: run start, each item outcome, and stop.
+    state: 'running' while iterating; 'stopped' on normal exit or kill.
+    last_outcome: 'none' at run start; 'success'/'failure' per item; 'kill' on kill stop.
+    consecutive_failures resets to 0 on any non-error outcome; a run is stopped when it
+    reaches CONSECUTIVE_FAILURE_KILL (see services/receive_sync.py).
+    """
+
+    state: str  # "running" | "stopped"
+    last_outcome: str  # "none" | "success" | "failure" | "kill"
+    consecutive_failures: int
+    stopped_reason: str  # "" while running; describes the stop cause
+    updated_at: str  # ISO-8601
+
 
 _VALID_MATCH_STATUSES = {"received", "no_match", "needs_attention", "already_scanned"}
 _STR_FIELDS = (
