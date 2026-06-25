@@ -81,16 +81,16 @@ def test_sync_status_read_returns_none_before_any_write(tmp_path):
     assert store.read_sync_status() is None
 
 
-def test_sync_status_migration_0003_applied_by_sqlite_repository(tmp_path):
-    """SQLiteRepository migration 0003 creates sync_status table alongside existing tables.
+def test_sync_status_migration_0004_applied_by_sqlite_repository(tmp_path):
+    """SQLiteRepository migration 0004 creates sync_status table alongside existing tables.
 
     Verifies the migration file applies cleanly on a fresh DB — the SyncStatusSQLiteStore
     and SQLiteRepository can share the same DB file without conflict.
     """
     db_path = tmp_path / "shared.db"
-    SQLiteRepository(db_path=db_path)  # runs all migrations including 0003
+    SQLiteRepository(db_path=db_path)  # runs all migrations including 0004
     with sqlite3.connect(db_path) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         cols = [row[1] for row in conn.execute("PRAGMA table_info(sync_status)").fetchall()]
-    assert version >= 3
+    assert version >= 4
     assert "consecutive_failures" in cols

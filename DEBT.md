@@ -100,7 +100,7 @@ automation problem. Validate and tune against real live-run failure patterns bef
 as an operational control. Trigger: first live run of the robot with a populated READY group and
 real portal credentials.
 
-[DEBT-T1-4a-002] 2026-06-24 — SyncStatusSQLiteStore._ensure_schema duplicates schema/0003_sync_status.sql.
+[DEBT-T1-4a-002] 2026-06-24 — SyncStatusSQLiteStore._ensure_schema duplicates schema/0004_sync_status.sql.
 adapters/db.py is at the 400-line gate_e limit, preventing the shared migration runner from being
 extended to cover sync_status. SyncStatusSQLiteStore uses its own CREATE TABLE IF NOT EXISTS
 directly. The schema definition is therefore declared twice (once in the SQL migration file, once in

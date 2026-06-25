@@ -5,7 +5,7 @@ May import: core.ports, core.schema, core.errors, sqlite3, config, logging, path
 
 Boundary: single-writer; no concurrent access expected (robot is the sole writer).
 """
-# DEBT-T1-4a-002 2026-06-24 — _ensure_schema here duplicates schema/0003_sync_status.sql.
+# DEBT-T1-4a-002 2026-06-24 — _ensure_schema here duplicates schema/0004_sync_status.sql.
 # adapters/db.py is at the 400-line gate limit, preventing the shared migration runner
 # from being extended.  Resolve by splitting db.py (DEBT-T15-003 covers the DB-layer
 # refactor trigger); unify migration entry-points at that time.
