@@ -153,15 +153,43 @@ def _read_receiver_config(problems: list[str]) -> tuple[str, str, str, str]:
     )
 
 
-def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
+_DOTENV_SEARCH: object = object()  # sentinel: trigger priority-order search
+
+
+def _find_dotenv() -> Path | None:
+    """Return the first existing .env in the priority search order, or None."""
+    xdg_raw = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    config_home = Path(xdg_raw) if xdg_raw else Path.home() / ".config"
+    for candidate in (Path(".env"), config_home / "receiving_app" / ".env"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_dotenv(dotenv_path: object) -> None:
+    """Resolve dotenv_path (sentinel, explicit, or None) and load the file."""
+    if dotenv_path is _DOTENV_SEARCH:
+        resolved: Path | None = _find_dotenv()
+    elif dotenv_path is not None:
+        resolved = Path(dotenv_path)  # type: ignore[arg-type]
+    else:
+        resolved = None
+    if resolved is not None:
+        load_dotenv(dotenv_path=resolved, override=False)
+
+
+def validate(dotenv_path: Path | str | None = _DOTENV_SEARCH) -> None:  # type: ignore[assignment]
     """Check all required vars in one pass; raise ConfigError listing every problem.
 
     Call this as the first statement in every entry point. On success, all
     module-level accessors (DB_PATH, SOURCE_USERNAME, etc.) are populated.
 
     Args:
-        dotenv_path: Path to .env file to load. Pass None to skip .env loading
-                     (useful in tests that set env vars directly).
+        dotenv_path: Path to a specific .env file to load; None to skip .env
+                     loading entirely (useful in tests that set env vars directly).
+                     When omitted, searches in order: ./.env, then
+                     $XDG_CONFIG_HOME/receiving_app/.env (falling back to
+                     ~/.config/receiving_app/.env). The first file found is loaded.
     """
     global DB_PATH, LOG_DIR, DOWNLOAD_DIR, POLL_INTERVAL_SECS
     global SOURCE_BASE_URL, SOURCE_USERNAME, SOURCE_PASSWORD
@@ -173,8 +201,7 @@ def validate(dotenv_path: Path | str | None = Path(".env")) -> None:
     global SOURCE_TYPE, SINK_TYPE, FAKE_SOURCE_DATA
     global RECEIVER_TYPE, RECEIVE_LOCATION, RECEIVE_WHSE_LOCATION, RECEIVE_SCREENSHOT_DIR
 
-    if dotenv_path is not None:
-        load_dotenv(dotenv_path=dotenv_path, override=False)
+    _load_dotenv(dotenv_path)
 
     problems: list[str] = []
 
