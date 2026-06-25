@@ -218,3 +218,15 @@ PR; that PR only made the discrepancy visible by bumping user_version to 3 while
 stayed at 2.
 Trigger: before either counter advances again; resolve in a focused PR touching core/schema.py and
 possibly migration/validation logic — not a rider on an unrelated PR.
+
+[BUG-SOURCE-CSV-001] 2026-06-25 — _parse_on_order_csv (adapters/source.py) does not validate required CSV headers.
+If the portal renames "PO #", "Model", or "Inventory Id", the parser silently degrades: a renamed
+"PO #" or "Model" column causes every row to return with an empty purchase_order or model_number
+(caller receives plausible-looking but wrong data); a renamed "Inventory Id" column causes every row
+to be skipped and the caller receives [] — indistinguishable from a genuinely empty export. Both
+outcomes are fail-open and violate Constitution Rule 4 (fail closed, deny by default). Found while
+writing T5-13 contract tests (tests/test_source_contract.py); not fixed there — that ticket adds
+tests only. Fix: at the start of _parse_on_order_csv, inspect reader.fieldnames after reading the
+header and raise SourceError if any required column ("Inventory Id", "PO #", "Model") is absent.
+Trigger: before the portal CSV export format is considered stable for production; or immediately if
+a live fetch returns 0 rows unexpectedly (may be a silent column-rename, not a genuine empty order).
