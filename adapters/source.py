@@ -48,6 +48,8 @@ _FILTER_UNCHECK_SECS = 2
 _DOWNLOAD_TIMEOUT_SECS = 60
 _DOWNLOAD_FALLBACK_SECS = 20
 
+_REQUIRED_CSV_COLUMNS: frozenset[str] = frozenset({"Inventory Id", "PO #", "Model"})
+
 
 # ── Browser helpers ───────────────────────────────────────────────────────────
 
@@ -192,6 +194,8 @@ def _parse_on_order_csv(csv_path: Path) -> list[dict]:
         rows: list[dict] = []
         with csv_path.open(newline="", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
+            if missing := _REQUIRED_CSV_COLUMNS - set(reader.fieldnames or []):
+                raise SourceError(f"CSV is missing required columns: {sorted(missing)!r}")
             for row in reader:
                 inv_id = str(row.get("Inventory Id", "") or "").strip()
                 if not inv_id:
@@ -212,6 +216,8 @@ def _parse_on_order_csv(csv_path: Path) -> list[dict]:
                     }
                 )
         return rows
+    except SourceError:
+        raise
     except (OSError, csv.Error) as exc:
         raise SourceError(f"failed to parse inventory CSV — {csv_path.name}") from exc
 

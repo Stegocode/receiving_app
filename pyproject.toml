@@ -92,6 +92,7 @@ pytest_add_cli_args_test_selection = [
     "tests/test_barcode_map.py",
     "tests/test_config_dotenv_search.py",
     "tests/test_config_conditional_creds.py",
+    "tests/test_source_csv_headers.py",
 ]
 
 [tool.importlinter]
