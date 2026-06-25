@@ -190,3 +190,15 @@ one unit with no error surfaced. Masked today by single-scanner staging. Fix: ha
 detect a no-op claim (zero rows updated) and retry against the next unclaimed row, or select+lock a
 distinct row per scan. Related: DEBT-T16.1-001 (WAL/concurrent-writer). Trigger: before running more
 than one scanner against the same PO concurrently.
+
+[DEBT-SCHEMA-VER-001] 2026-06-24 — SCHEMA_VERSION in core/schema.py and SQLite user_version can drift.
+core/schema.py declares SCHEMA_VERSION = 2 (ReceivingRecord shape version). The SQLite DB tracks a
+separate version via PRAGMA user_version (now 3 after migration 0003 added barcode_model_map). Two
+independent counters with no cross-check — if one advances without the other, the gap is silent.
+Potential Rule 5 / Rule 8 concern (single source of truth; schema as a contract). Decision needed:
+UNIFY if both counters represent the same concept, or explicitly RENAME and document them as distinct
+concerns (record-shape version vs. DB migration level). Pre-existing gap — predates the barcode-map
+PR; that PR only made the discrepancy visible by bumping user_version to 3 while SCHEMA_VERSION
+stayed at 2.
+Trigger: before either counter advances again; resolve in a focused PR touching core/schema.py and
+possibly migration/validation logic — not a rider on an unrelated PR.
