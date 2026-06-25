@@ -43,13 +43,27 @@ from core.ports import Printer
 from core.schema import ReceivingRecord
 
 
+def _note_poll_error(exc: Exception, logged: list[bool], log_fn: Callable[[str], None]) -> None:
+    if not logged[0]:
+        log_fn(f"focus poll error: {exc!r}")
+        logged[0] = True
+
+
+def _populate_and_queue(
+    populate: Callable[[str], None],
+    po: str,
+    log_fn: Callable[[str], None],
+    queue_fn: Callable[[str], None],
+) -> None:
+    try:
+        populate(po)
+        log_fn(f"PO {po} loaded")
+        queue_fn(po)
+    except Exception as exc:
+        log_fn(f"PO {po} error: {exc}")
+
+
 class ReceivingUI:
-    """Tkinter receiving UI — thin view driven by injected service callables.
-
-    __init__ stores injected dependencies only; no Tk objects are created.
-    Call run() to create the Tk root, build all widgets, and enter mainloop.
-    """
-
     _manual_model_entry: tk.Entry
     _manual_serial_entry: tk.Entry
 
@@ -66,7 +80,6 @@ class ReceivingUI:
         self._populate = populate
 
     def run(self) -> None:
-        """Create Tk root, build widgets, enter mainloop."""
         root = tk.Tk()
         self._root = root
         self._state = "IDLE"
@@ -90,13 +103,15 @@ class ReceivingUI:
                 self._manual_serial_entry,
             )
 
+            _fault_logged: list[bool] = [False]
+
             def _poll_focus() -> None:
                 try:
                     focused = root.focus_get()
                     if focused not in _allow:
                         scan_entry.focus_force()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _note_poll_error(exc, _fault_logged, self._log)
                 root.after(50, _poll_focus)
 
             _poll_focus()
@@ -104,8 +119,6 @@ class ReceivingUI:
         root.bind("<Escape>", self._dismiss_no_match)
         root.bind("<End>", self._dismiss_no_match)
         root.mainloop()
-
-    # ── Widget construction ────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         self._root.configure(bg=C_BAR)
@@ -238,8 +251,6 @@ class ReceivingUI:
         )
         scan_states.build_manual_frame(self, p)
 
-    # ── Scan handling ──────────────────────────────────────────────────────────
-
     def _on_scan(self, barcode: str) -> None:
         if self._state == "MATCHING":
             return
@@ -274,7 +285,6 @@ class ReceivingUI:
             ).start()
 
     def _lock_po(self, po_number: str) -> None:
-        """Switch the locked PO; reset the state machine to IDLE for the new PO."""
         self._current_po = po_number
         self._model_scan = None
         scan_states.set_idle(self)
@@ -307,8 +317,6 @@ class ReceivingUI:
             self._log(f"PRINT FAILED  PO:{rec.purchase_order}  Model:{rec.model_number}")
             self._set_print_failed(rec)
 
-    # ── State / flash / alarm — see adapters/ui/scan_states.py ───────────────
-
     def _set_idle(self) -> None:
         scan_states.set_idle(self)
 
@@ -330,8 +338,6 @@ class ReceivingUI:
         except Exception as exc:
             self._log(f"PO {po_number} label: {exc}")
 
-    # ── Status log ────────────────────────────────────────────────────────────
-
     def _log(self, msg: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}\n"
@@ -345,8 +351,6 @@ class ReceivingUI:
 
         self._root.after(0, _append)
 
-    # ── PO list display ───────────────────────────────────────────────────────
-
     def _set_po_list(self, pos: list[str]) -> None:
         def _do() -> None:
             self._po_list.configure(state="normal")
@@ -359,8 +363,6 @@ class ReceivingUI:
             self._po_list.configure(state="disabled")
 
         self._root.after(0, _do)
-
-    # ── PO submission ─────────────────────────────────────────────────────────
 
     def _on_po_submit(self, _event: object = None) -> None:
         raw = self._po_var.get().strip()
@@ -382,12 +384,11 @@ class ReceivingUI:
         populate = self._populate
         if populate is None:
             return
-        try:
-            populate(po)
-            self._log(f"PO {po} loaded")
-        except Exception as exc:
-            self._log(f"PO {po} error: {exc}")
-        self._root.after(0, self._add_po, po)
+
+        def _queue(p: str) -> None:
+            self._root.after(0, self._add_po, p)
+
+        _populate_and_queue(populate, po, self._log, _queue)
 
     def _add_po(self, po: str) -> None:
         if po not in self._active_pos:
