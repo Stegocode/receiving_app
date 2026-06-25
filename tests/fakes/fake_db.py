@@ -9,6 +9,8 @@ May import: core.ports, core.schema, core.errors.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from core.errors import RepositoryError
 from core.schema import ReceivingRecord
 
@@ -24,6 +26,7 @@ class FakeRepository:
     def __init__(self) -> None:
         self._records: dict[str, dict] = {}  # receiving_id → record dict
         self._po_items: dict[str, dict] = {}  # inventory_id → item dict
+        self._barcode_map: dict[str, dict] = {}  # raw_barcode → mapping dict
 
     def get_purchase_order(self, po_number: str) -> list[dict]:
         return [
@@ -162,3 +165,18 @@ class FakeRepository:
         self._po_items.clear()
         for item in items:
             self._po_items[item["inventory_id"]] = dict(item)
+
+    def save_barcode_mapping(
+        self, raw_barcode: str, model_number: str, fuzzy_score: float, source: str
+    ) -> None:
+        self._barcode_map[raw_barcode] = {
+            "raw_barcode": raw_barcode,
+            "model_number": model_number,
+            "fuzzy_score": fuzzy_score,
+            "confirmed_at": datetime.now(UTC).isoformat(),
+            "source": source,
+        }
+
+    def lookup_barcode_mapping(self, raw_barcode: str) -> str | None:
+        entry = self._barcode_map.get(raw_barcode)
+        return entry["model_number"] if entry else None

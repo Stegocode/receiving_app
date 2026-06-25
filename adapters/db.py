@@ -1,8 +1,5 @@
-"""
-Owns: SQLite implementation of the Repository port.
-Must not: import services or other adapters.
-May import: core.ports, core.schema, core.errors, sqlite3, config, json, logging, pathlib, re.
-"""
+"""Owns: SQLite implementation of the Repository port.
+Must not: import services or adapters. May import: core, config, stdlib."""
 
 from __future__ import annotations
 
@@ -23,7 +20,6 @@ _MIGRATION_RE = re.compile(r"^(\d{4})_")
 
 
 def _pending_migrations(schema_dir: Path, current_version: int) -> list[tuple[int, Path]]:
-    """Return (version, path) pairs for every migration not yet applied, in ascending order."""
     pending = []
     for path in schema_dir.glob("*.sql"):
         m = _MIGRATION_RE.match(path.name)
@@ -39,8 +35,6 @@ def _now_iso() -> str:
 
 
 class SQLiteRepository:
-    """SQLite-backed Repository. Portable to Postgres via ON CONFLICT DO UPDATE."""
-
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path: Path = db_path if db_path is not None else config.DB_PATH
         self._ensure_schema()
@@ -51,12 +45,7 @@ class SQLiteRepository:
         return conn
 
     def _ensure_schema(self) -> None:
-        """Apply all unapplied migrations in schema/ in ascending order.
-        Uses PRAGMA user_version as the applied-version marker.  Each migration
-        runs inside a single BEGIN/COMMIT block so the version bump is atomic
-        with the schema change.  Idempotent: a second call applies nothing when
-        user_version already equals the highest available migration.
-        """
+        """Applies pending migrations in order; idempotent and atomic per migration."""
         try:
             conn = sqlite3.connect(self._db_path)
             try:
@@ -88,7 +77,6 @@ class SQLiteRepository:
             raise RepositoryError(f"get_purchase_order failed — {exc}") from exc
 
     def unclaimed_for_po(self, po_number: str) -> list[dict]:
-        """Return po_inventory rows for the PO that have not yet been claimed."""
         try:
             with self._connect() as conn:
                 cur = conn.execute(
@@ -100,7 +88,6 @@ class SQLiteRepository:
             raise RepositoryError(f"unclaimed_for_po failed — {exc}") from exc
 
     def claimed_for_po(self, po_number: str) -> list[dict]:
-        """Return po_inventory rows for the PO that have already been claimed."""
         try:
             with self._connect() as conn:
                 cur = conn.execute(
@@ -126,16 +113,7 @@ class SQLiteRepository:
             raise RepositoryError(f"claim failed — {exc}") from exc
 
     def claim_and_save(self, inventory_id: str, claimed_at: str, record: ReceivingRecord) -> None:
-        """Claim a po_inventory row and insert the receiving record in one atomic transaction.
-
-        Both writes share a single connection and commit together.  A process crash
-        mid-method leaves SQLite's transaction uncommitted — neither write persists,
-        so the unit remains unclaimed and scannable on retry.
-
-        The AND claimed_at IS NULL guard is preserved: a concurrent scan that already
-        claimed this row will find 0 rows updated; the record upsert is still safe
-        (same receiving_id → idempotent ON CONFLICT DO UPDATE).
-        """
+        """Claim and save in one atomic transaction; crash leaves both writes uncommitted."""
         try:
             now = _now_iso()
             with self._connect() as conn:
@@ -227,11 +205,7 @@ class SQLiteRepository:
             raise RepositoryError(f"upsert_items failed — {exc}") from exc
 
     def save_record(self, record: ReceivingRecord) -> None:
-        """Insert or update a receiving record.
-
-        On conflict (same receiving_id): updates domain columns and updated_at,
-        but never touches emitted or created_at — a re-save cannot un-emit a record.
-        """
+        """On conflict: updates domain columns but never touches emitted or created_at."""
         try:
             now = _now_iso()
             with self._connect() as conn:
@@ -322,7 +296,6 @@ class SQLiteRepository:
             raise RepositoryError(f"was_emitted failed — {exc}") from exc
 
     def find_claimed_by_serial(self, po_number: str, serial: str) -> dict | None:
-        """Return merged catalog+logistics row for a received unit with the given serial."""
         try:
             with self._connect() as conn:
                 cur = conn.execute(
@@ -356,7 +329,6 @@ class SQLiteRepository:
             raise RepositoryError(f"clear_po_items failed — {exc}") from exc
 
     def replace_po_items(self, items: list[dict]) -> None:
-        """Wipe po_inventory and reload atomically — no window where catalog is empty."""
         try:
             with self._connect() as conn:
                 conn.execute("DELETE FROM po_inventory")
@@ -398,3 +370,31 @@ class SQLiteRepository:
                 return int(row[0]) if row else 0
         except sqlite3.Error as exc:
             raise RepositoryError(f"count_po_items failed — {exc}") from exc
+
+    def save_barcode_mapping(
+        self, raw_barcode: str, model_number: str, fuzzy_score: float, source: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO barcode_model_map"
+                    " (raw_barcode, model_number, fuzzy_score, confirmed_at, source)"
+                    " VALUES (?, ?, ?, ?, ?) ON CONFLICT(raw_barcode) DO UPDATE SET"
+                    " model_number=excluded.model_number, fuzzy_score=excluded.fuzzy_score,"
+                    " confirmed_at=excluded.confirmed_at, source=excluded.source",
+                    (raw_barcode, model_number, fuzzy_score, _now_iso(), source),
+                )
+            _log.info("db_save_barcode_mapping raw_barcode=%s model=%s", raw_barcode, model_number)
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"save_barcode_mapping failed — {exc}") from exc
+
+    def lookup_barcode_mapping(self, raw_barcode: str) -> str | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT model_number FROM barcode_model_map WHERE raw_barcode = ?",
+                    (raw_barcode,),
+                ).fetchone()
+                return str(row["model_number"]) if row else None
+        except sqlite3.Error as exc:
+            raise RepositoryError(f"lookup_barcode_mapping failed — {exc}") from exc
