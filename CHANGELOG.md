@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — fix/mutation-gate-integrity — 2026-06-26
+
+### Fixed
+
+**Mutation gate was passing vacuously (two stacked bugs)**
+- `[tool.mutmut] also_copy` omitted `"schema"`, so migration `.sql` files were
+  absent from the mutant sandbox. Every DB-backed test failed with
+  "no such table: barcode_model_map", leaving all 1094 mutants "not checked"
+  (exit code `None`).
+- The inline CI scorer counted `None` exit codes as killed (`if code != 0`),
+  and `mutmut run || true` swallowed the crash — a run that checked nothing
+  reported 100% and cleared the 78% threshold.
+- Real score once fixed: **78.8%** (862 killed / 232 survived / 1094 checked).
+
+### Changed
+
+- `pyproject.toml`: added `"schema"` to `[tool.mutmut] also_copy`.
+- `scripts/mutation_score.py`: new committed scorer (extracted from inline YAML
+  heredoc). Counts `None` exit codes as `not_checked`; asserts
+  `checked == generated` and exits non-zero if any mutant is unchecked; computes
+  `score = killed / checked`; prints killed/survived/not_checked counts.
+- `.github/workflows/ci.yml`: removed `|| true` from `mutmut run`; replaced
+  inline heredoc scorer with `python scripts/mutation_score.py`.
+- `MUTATION.md`: updated to real post-fix run (78.8%, 232 survivors); added note
+  that the gate was previously non-functional.
+- `DEBT.md`: added `DEBT-MUTGATE-001` — 232 survivors need triage.
+
+---
+
 ## [0.1.0] — 2026-06-22
 
 Initial complete release: scanner desk application, catalog refresh utility,

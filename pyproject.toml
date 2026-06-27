@@ -71,7 +71,7 @@ show_missing = true
 # Mutate only core/ and services/ — adapters are live-only, low value to mutate.
 source_paths = ["core", "services"]
 # Copy everything tests need to run inside the mutants/ sandbox.
-also_copy = ["adapters", "config.py", "scripts"]
+also_copy = ["adapters", "config.py", "scripts", "schema"]
 # Run only the tests that exercise core/services logic; adapter integration tests
 # are excluded here because they need real infrastructure and would all fail anyway.
 pytest_add_cli_args_test_selection = [
