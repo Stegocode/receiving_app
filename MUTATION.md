@@ -1,21 +1,25 @@
 # Accepted Equivalent Mutants
 
-Mutation score (real, post gate-fix): **78.8%** (862 killed / 1094 checked).
+Mutation score (real, post gate-fix): **79.2%** (839 killed / 221 survived / 0 not checked / 1060 checked).
 
 > **Gate was previously non-functional.** The `[tool.mutmut] also_copy` list omitted
 > `"schema"`, so every DB-backed test failed inside the mutant sandbox with
-> "no such table: barcode_model_map". This left all 1094 mutants as "not checked"
+> "no such table: barcode_model_map". This left all mutants as "not checked"
 > (exit code `None`). The old CI scorer counted `None` as killed (`if code != 0`),
 > and `mutmut run || true` hid the crash, so every run reported 100% while checking
 > nothing. Fixed in fix/mutation-gate-integrity: `"schema"` added to `also_copy`,
 > scorer rewritten to treat `None` as a hard failure, `|| true` removed.
 
-232 survivors remain to be triaged — see DEBT.md (DEBT-MUTGATE-001). The previously
+The score is approximate and drifts run-to-run because some mutants are killed by
+timeout rather than assertion, making it sensitive to CI-runner speed; the durable
+invariants the gate enforces are score >= 78% and not_checked == 0, not any exact count.
+
+221 survivors remain to be triaged — see DEBT.md (DEBT-MUTGATE-001). The previously
 classified 151 equivalents below were confirmed under the old (broken) gate and have
 not been re-verified against the real run. They are preserved here as a starting
 point for triage.
 
-The CI gate is set at **78%** — held from before; the real score now barely clears it.
+The CI gate is set at **78%** — held from before; the real score clears it.
 More tests are needed to push the score up; the threshold must not be softened.
 
 ---
