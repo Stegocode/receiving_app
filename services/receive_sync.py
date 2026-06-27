@@ -14,6 +14,9 @@ not_measured: live portal timing, real board API mutations, real browser behavio
               See DEBT.md [DEBT-T14-001, DEBT-T1-4a-001].
 
 Boundary: single-writer; consecutive_failures counter is per-run (starts at 0, not persisted).
+          Items are sorted ascending by numeric inventory_id before dispatch — the receiving
+          system fills a model's open IDs lowest-first; serial must bind to the correct ID.
+          Non-numeric inventory_ids log a warning and sort after all numeric items.
           Manual recovery: operator sets item status back to 'ready' to re-feed.
 """
 
@@ -75,7 +78,11 @@ def receive_pending(
     executor: ReceivingExecutor,
     sync_status: SyncStatusStore,
 ) -> ReceiveResult:
-    """Poll READY items and drive the executor for each.
+    """Poll READY items, sort by numeric inventory_id ascending, and drive the executor.
+
+    The receiving system fills a model's open inventory IDs lowest-first; serials must arrive in
+    that same order so each serial binds to the correct ID.  Items whose inventory_id
+    cannot be parsed as an integer log a warning and sort after all numeric items.
 
     PASS:    failed == 0 and no_match == 0 — all items received.
     PARTIAL: failed > 0 or no_match > 0, no kill — loop completed with warnings.
@@ -87,6 +94,20 @@ def receive_pending(
                   DEBT-T1-4a-001].
     """
     items = board.poll_ready()
+
+    def _id_sort_key(item: dict) -> tuple[int, int]:
+        raw = item.get("inventory_id", "")
+        try:
+            return (0, int(raw))
+        except (ValueError, TypeError):
+            logger.warning(
+                "receive_sort_non_numeric_id inventory_id=%r item_id=%s",
+                raw,
+                item.get("item_id", "unknown"),
+            )
+            return (1, 0)
+
+    items = sorted(items, key=_id_sort_key)
     received = no_match = failed = skipped = 0
     consecutive_failures = 0
     logger.info("receive_loop_start ready=%d", len(items))
