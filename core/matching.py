@@ -25,11 +25,12 @@ def normalize(s: str) -> str:
 
 
 def normalize_key(s: str) -> str:
-    """Normalize for structural key comparison: lowercase, remove spaces and hyphens.
+    """Normalize for exact-equality comparison: lowercase, remove spaces and hyphens.
 
-    Used exclusively by the prefix-collision guard in resolve_model so that
-    punctuation variants (e.g. "B36-CL80-SNS-X") collapse to the same key as
-    their hyphen-free counterpart ("B36CL80SNSX") before prefix/startswith tests.
+    This is the canonical normalizer for deciding whether a barcode and a model
+    represent the same unit. Import this function; do not duplicate the logic.
+    "B36-CL80-SNS-X" and "B36CL80SNSX" collapse to the same key; "SHX78CM5N"
+    and "SHP78CM5N" do not (different characters remain after stripping).
     """
     return s.lower().replace("-", "").replace(" ", "")
 
@@ -75,16 +76,21 @@ def find_best_match(
 
 
 class MatchStatus(Enum):
-    AUTO = "auto"
-    NEEDS_INPUT = "needs_input"
+    AUTO = "auto"  # exact-normalized match; safe to receive with no operator action
+    PROPOSE = "propose"  # walk found one candidate; show it, receive only on ratification
+    NEEDS_INPUT = "needs_input"  # zero or two-or-more candidates; operator chooses or types
 
 
 @dataclass(frozen=True)
 class MatchResult:
     """Typed result from resolve_model — never None.
 
-    AUTO:        exactly one PO model matched; model is set, candidates is empty.
-    NEEDS_INPUT: zero or two-or-more matches; model is None, candidates holds every match found.
+    AUTO:        Tier-1 exact-normalized barcode matches exactly one PO model;
+                 model is set, candidates is empty.
+    PROPOSE:     Tier-2 forward-only walk found exactly one candidate;
+                 model is set, candidates is empty. Operator must ratify before receiving.
+    NEEDS_INPUT: Zero or two-or-more matches at any tier; model is None,
+                 candidates holds every match found.
     """
 
     status: MatchStatus
@@ -121,30 +127,31 @@ def model_matches_barcode(model: str, barcode: str) -> bool:
 
 
 def resolve_model(barcode: str, po_models: list[str]) -> MatchResult:
-    """Run model_matches_barcode for every model on the PO and return a typed MatchResult.
+    """Two-tier resolver: exact-normalized equality first, forward-only walk second.
 
-    EXACTLY ONE match, not prefix-ambiguous → AUTO(model=..., candidates=[])
-    ZERO matches                            → NEEDS_INPUT(model=None, candidates=[])
-    TWO OR MORE matches                     → NEEDS_INPUT(model=None, candidates=[all matched])
-    ONE match but prefix-ambiguous          → NEEDS_INPUT(model=None, candidates=[matched])
+    Tier 1 — exact normalized equality (normalize_key: lowercase, strip spaces/hyphens):
+      Exactly 1 match  → AUTO(model=matched, candidates=[])
+      2 or more matches → NEEDS_INPUT(model=None, candidates=[all exact])
 
-    Prefix-collision guard: before evaluating walk results, normalize every PO model
-    with normalize_key (lowercase, strip spaces and hyphens). If any two normalized
-    keys share a prefix relationship, the shorter model is marked prefix-ambiguous.
-    A single walk-match on a prefix-ambiguous model returns NEEDS_INPUT rather than
-    AUTO, preventing auto-bind of a base SKU when the scanned unit is a variant
-    whose model differs only in punctuation (e.g. "B36-CL80-SNS-X" vs "B36CL80SNS").
+    Tier 2 — forward-only walk, reached only when Tier 1 found zero exact matches:
+      Exactly 1 match  → PROPOSE(model=matched, candidates=[])
+      0 or 2+ matches  → NEEDS_INPUT(model=None, candidates=[all walked])
 
-    Never auto-picks when multiple models match. Always returns a MatchResult — never None.
+    A walk match proposes, never autos — prefix, mid-insertion, and near-twin
+    collisions cannot silently bind. Only exact-normalized equality autos.
+
+    Always returns a MatchResult — never None.
     """
-    norm_keys = [normalize_key(m) for m in po_models]
-    prefix_ambiguous: set[str] = set()
-    for i, m1 in enumerate(po_models):
-        for j in range(len(po_models)):
-            if i != j and norm_keys[j].startswith(norm_keys[i]) and norm_keys[i] != norm_keys[j]:
-                prefix_ambiguous.add(m1)
+    # Tier 1 — exact normalized equality
+    barcode_key = normalize_key(barcode)
+    exact = [m for m in po_models if normalize_key(m) == barcode_key]
+    if len(exact) == 1:
+        return MatchResult(status=MatchStatus.AUTO, model=exact[0], candidates=[])
+    if len(exact) >= 2:
+        return MatchResult(status=MatchStatus.NEEDS_INPUT, model=None, candidates=exact)
 
-    matched = [m for m in po_models if model_matches_barcode(m, barcode)]
-    if len(matched) == 1 and matched[0] not in prefix_ambiguous:
-        return MatchResult(status=MatchStatus.AUTO, model=matched[0], candidates=[])
-    return MatchResult(status=MatchStatus.NEEDS_INPUT, model=None, candidates=matched)
+    # Tier 2 — forward-only walk (junk-tolerant; proposes, never autos)
+    walked = [m for m in po_models if model_matches_barcode(m, barcode)]
+    if len(walked) == 1:
+        return MatchResult(status=MatchStatus.PROPOSE, model=walked[0], candidates=[])
+    return MatchResult(status=MatchStatus.NEEDS_INPUT, model=None, candidates=walked)
