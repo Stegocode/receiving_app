@@ -24,25 +24,19 @@ from playwright.sync_api import (
 
 from adapters import portal_dom
 from core.errors import ExecutorError
-from core.matching import match_score, normalize
+from core.matching import exact_model_match
 from core.ports import ReceiveOutcome
 
 _log = logging.getLogger(__name__)
 
 
 def _model_matches(target: str, cell_text: str) -> bool:
-    """True if target and cell_text refer to the same model (fuzzy, space-collapsed, >= 0.85)."""
-    a = normalize(target)
-    b = normalize(cell_text)
-    if not a or not b:
-        return False
-    if a == b or b in a or a in b:
-        return True
-    a_c = a.replace(" ", "")
-    b_c = b.replace(" ", "")
-    if a_c == b_c or b_c in a_c or a_c in b_c:
-        return True
-    return match_score(a_c, b_c) >= 0.85
+    """True if target and cell_text refer to the same model (exact normalized match).
+
+    Normalizes both via normalize_key (case-fold, strip spaces/hyphens) then compares
+    for equality. Returns False when either argument is empty after normalization.
+    """
+    return exact_model_match(target, cell_text)
 
 
 class PortalReceiver:

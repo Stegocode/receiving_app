@@ -108,7 +108,7 @@ def test_rescan_junky_vendor_barcode_caught_by_serial() -> None:
 
     The duplicate check is barcode-independent: serial is the discriminator.
     A genuine re-scan of a received unit (same physical unit, different barcode
-    encoding) must be detected even if the barcode does not fuzzy-match the catalog.
+    encoding) must be detected even if the barcode does not exactly match the catalog.
     """
     repo = FakeRepository()
     sink = FakeResultSink()

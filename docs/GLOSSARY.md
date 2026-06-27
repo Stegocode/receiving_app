@@ -33,10 +33,9 @@ robot logs `robot_kill` and stops. Prevents a run of bad data from making
 repeated failed portal requests. Restart the robot after investigating root cause.
 
 ### EAN-14
-A 14-digit barcode format. The application strips a leading `0` from a
-14-digit all-digit barcode before fuzzy-matching it against catalog model
-strings, because some scanners emit the 14-digit form of a 13-digit code.
-See `core/matching.py: strip_ean14()`.
+A 14-digit barcode format. Some scanners emit the 14-digit form of a
+13-digit code (leading `0` prefix). Handling of this format during model
+matching is deferred to a future normalization pass. See `core/matching.py`.
 
 ### Idempotency Key (`receiving_id`)
 A stable SHA-256 hash of `po_number + inventory_id + barcode`, stored as the
@@ -60,14 +59,15 @@ The outcome field on every receiving record. One of four values:
 | Value | Meaning |
 |---|---|
 | `received` | Barcode matched a catalog entry; unit claimed and label printed. |
-| `no_match` | No catalog entry scored at or above the match threshold. |
+| `no_match` | No catalog entry exactly matched the scanned barcode. |
 | `needs_attention` | Matched but requires human review before completing. |
 | `already_scanned` | Serial number already claimed on this PO — duplicate scan. |
 
 ### `no_match`
-The scan outcome when the scanned barcode does not fuzzy-match any unclaimed
-catalog row on the locked purchase order at or above the matching threshold.
-The slot is not claimed; the outcome is posted to the NO MATCH board group.
+The scan outcome when the scanned barcode does not exactly match (normalized:
+uppercase, spaces and hyphens stripped) any unclaimed catalog row on the locked
+purchase order. The slot is not claimed; the outcome is posted to the NO MATCH
+board group.
 
 ### `needs_attention`
 A scan outcome that surfaces the item to a dedicated board group for human
@@ -148,17 +148,16 @@ infrastructure. Selected via `*_TYPE=fake` / `null` / `manual` / `preview` in
 `.env`. All fakes live in `tests/fakes/` or alongside their adapter and are
 used by the test suite as well as for local development without credentials.
 
-### Fuzzy Matching
-Similarity scoring between a scanned barcode string and a model string, using
-Python `difflib.SequenceMatcher`. Two distinct thresholds are in use:
+### Exact Normalized Match
+The matching strategy used to compare a scanned barcode string against a model
+string. Both sides are normalized identically — converted to uppercase and stripped
+of all spaces and hyphens — then compared for string equality. No scoring or
+thresholds; a match is exact equality on the normalized form, or no match.
 
-| Context | Threshold | Location |
+| Context | Function | Location |
 |---|---|---|
-| Catalog matching (scanner app) | **0.6** | `core/matching.py: find_best_match()` default |
-| Portal grid matching (robot) | **0.85** | `adapters/receiver.py: _model_matches()` |
-
-The higher threshold on the portal grid prevents the robot from committing a
-receive against the wrong model row on the portal side.
+| Catalog matching (scanner app) | `resolve_exact()` | `core/matching.py` |
+| Portal grid matching (robot) | `_model_matches()` via `exact_model_match()` | `adapters/receiver.py` |
 
 ### Port
 A `@runtime_checkable Protocol` class in `core/ports.py` defining the interface

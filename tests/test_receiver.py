@@ -130,9 +130,9 @@ def test_model_matches_case_and_space_insensitive():
 
 
 def test_model_matches_near_match_above_threshold():
-    """A high-similarity pair (space-collapsed ratio >= 0.85) returns True."""
-    # "ABCDEFGHIJ" vs "ABCDEFGHIX" — 9 of 10 chars match; ratio = 0.9
-    assert _model_matches("ABCDEFGHIJ", "ABCDEFGHIX") is True
+    """A near-twin pair that differs by one character must NOT match (exact match only)."""
+    # "ABCDEFGHIJ" vs "ABCDEFGHIX" — differ at position 9 (J vs X); not an exact match.
+    assert _model_matches("ABCDEFGHIJ", "ABCDEFGHIX") is False
 
 
 def test_model_matches_clearly_different_returns_false():

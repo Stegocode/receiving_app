@@ -196,7 +196,7 @@ OR add a reconciliation pass that detects RECEIVED-group items with missing stat
 relying on board state as the authoritative received-ledger, or first observed half-applied row.
 
 [DEBT-MATCH-001] 2026-06-23 — identical-model rows may under-claim under concurrent scanners.
-In services/receive.py process_scan, after find_best_match returns a model, the matched row is chosen
+In services/receive.py process_scan, after resolve_exact returns a model, the matched row is chosen
 via next((c for c in candidates if c["model_number"] == best_model), None) — it always takes the
 FIRST matching unclaimed row. For a single scanner this is fine: each claim removes that row from
 unclaimed_for_po, so the next scan of the same model finds the next row. The risk is CONCURRENT
@@ -206,6 +206,15 @@ one unit with no error surfaced. Masked today by single-scanner staging. Fix: ha
 detect a no-op claim (zero rows updated) and retry against the next unclaimed row, or select+lock a
 distinct row per scan. Related: DEBT-T16.1-001 (WAL/concurrent-writer). Trigger: before running more
 than one scanner against the same PO concurrently.
+
+[DEBT-MATCH-002] 2026-06-26 — barcode_model_map.fuzzy_score column is a misnomer post-exact-match.
+The barcode_model_map table (schema migration 0003) stores a fuzzy_score column that was meaningful
+under the old difflib threshold-based matcher. After T2b replaced fuzzy matching with exact normalized
+equality, the column name is misleading — the system no longer produces or uses similarity scores.
+The column schema and the ReceivingMapStore port's fuzzy_score parameter are intentionally left
+unchanged in this ticket (out of scope, no migration). Resolve the naming mismatch in the
+SCHEMA_VERSION reconciliation ticket (see DEBT-SCHEMA-VER-001). Trigger: before SCHEMA_VERSION or
+SQLite user_version is advanced again; rename fuzzy_score to match_score or drop it if unused.
 
 [DEBT-SCHEMA-VER-001] 2026-06-24 — SCHEMA_VERSION in core/schema.py and SQLite user_version can drift.
 core/schema.py declares SCHEMA_VERSION = 2 (ReceivingRecord shape version). The SQLite DB tracks a

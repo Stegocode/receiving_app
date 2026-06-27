@@ -216,9 +216,9 @@ def test_adjacent_sku_different_serial_is_no_match_not_already_scanned() -> None
     WRF560SEHZ01 with serial SN-HZ01.  Physically distinct units; must produce
     no_match, not already_scanned.
 
-    Kills the mutant that reverts to barcode/model comparison: 'WRF560SEHZ01'
-    fuzzy-matches 'WRF560SEHZ00' (score > 0.6) and would silently swallow the
-    adjacent-SKU scan as a duplicate.  Serial-based detection avoids this.
+    Under exact normalized matching, 'WRF560SEHZ01' does not match 'WRF560SEHZ00'
+    (one-character difference prevents equality). Serial-based duplicate detection
+    uses only the serial — a different serial never triggers already_scanned.
     """
     repo = FakeRepository()
     sink = FakeResultSink()

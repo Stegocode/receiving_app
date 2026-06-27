@@ -470,9 +470,9 @@ Check the screenshots for that inventory ID (steps `04a_grid_before_search` and
 `04_qty_set`) to see whether the model row was found.
 
 **Causes:**
-- The model string on the board item does not fuzzy-match any row in the
-  receiving grid (match threshold is 0.85). Update the model field on the
-  board item to match the portal's exact spelling.
+- The model string on the board item does not exactly match (normalized:
+  uppercase, spaces/hyphens stripped) any row in the receiving grid. Update
+  the model field on the board item to match the portal's spelling exactly.
 - All grid rows for that model have TBR quantity = 0 (already fully received).
   Verify in the portal.
 - A required field (PO number, inventory ID, model, or serial) is blank on the

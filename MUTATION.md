@@ -1,26 +1,24 @@
 # Accepted Equivalent Mutants
 
-Mutation score (real, post PR-2a kill-tests): **79.6%** (871 killed / 223 survived / 0 not checked / 1094 checked).
+Mutation score after fix/exact-model-match (T2b): **79.2%** (850 killed / 223 survived / 1073 checked / 0 not_checked).
 
-> **Gate was previously non-functional.** The `[tool.mutmut] also_copy` list omitted
-> `"schema"`, so every DB-backed test failed inside the mutant sandbox with
-> "no such table: barcode_model_map". This left all mutants as "not checked"
-> (exit code `None`). The old CI scorer counted `None` as killed (`if code != 0`),
-> and `mutmut run || true` hid the crash, so every run reported 100% while checking
-> nothing. Fixed in fix/mutation-gate-integrity: `"schema"` added to `also_copy`,
-> scorer rewritten to treat `None` as a hard failure, `|| true` removed.
+> **Gate was previously non-functional** (fixed in fix/mutation-gate-integrity, PR #60):
+> `[tool.mutmut] also_copy` omitted `"schema"`, so DB-backed tests failed inside the
+> mutant sandbox with "no such table: barcode_model_map", leaving all mutants "not
+> checked". The old CI scorer counted `None` exit codes as killed and `mutmut run || true`
+> hid the crash — every run reported 100% while checking nothing.
+> Fixed: `"schema"` added to `also_copy`; scorer rewritten; `|| true` removed.
+
+T2b code changes that shift the mutant pool: deleted `find_best_match`, `match_score`,
+`normalize`, `strip_ean14`, `_norm_model`, and the `difflib` import from
+`core/matching.py`; added `exact_model_match` and `resolve_exact` (both using the
+shared `normalize_key` canonical normalizer from T2a/PR #60). Pool size and score
+are updated from the real T2b run below.
 
 The score is approximate and drifts run-to-run because some mutants are killed by
-timeout rather than assertion, making it sensitive to CI-runner speed; the durable
-invariants the gate enforces are score >= 78% and not_checked == 0, not any exact count.
-
-221 survivors remain to be triaged — see DEBT.md (DEBT-MUTGATE-001). The previously
-classified 151 equivalents below were confirmed under the old (broken) gate and have
-not been re-verified against the real run. They are preserved here as a starting
-point for triage.
-
-The CI gate is set at **78%** — held from before; the real score clears it.
-More tests are needed to push the score up; the threshold must not be softened.
+timeout rather than assertion, making it sensitive to runner speed; the durable
+invariants the gate enforces are **score >= 78%** and **not_checked == 0**.
+The CI gate is set at **78%** — the threshold must not be softened.
 
 ---
 
@@ -116,12 +114,21 @@ records; it never sets `match_status = "needs_attention"`. The branch that calls
 | Mutant ID | Description |
 |-----------|-------------|
 | recv_br_44 | `if matched and best_model` → `if matched or best_model` — `matched` is produced by `next(...) if best_model else None`, so `matched` is `None` iff `best_model` is `None`; `and` and `or` are observably equivalent. |
-| recv_ps_13 | `next(..., None)` → `next(..., )` — default is unreachable: when `best_model` is truthy it was produced by `find_best_match` over the same candidates list, so the generator always yields a result before exhaustion. |
+| x_process_scan__mutmut_16 (was recv_ps_13) | `next(..., None)` → `next(..., )` — default is unreachable: when `best_model` is truthy it was returned by `resolve_exact` from the deduplicated candidates list, so the generator always yields a result before exhaustion. |
 | recv_dup_br_1 | `claimed_row.get("model_number", barcode)` → `…get("model_number", None)` — default unreachable: `claimed_row` is found via `next(c for c in claimed if c["model_number"] == barcode)`, so it always has `"model_number"`. The `barcode` fallback is defensive dead code. |
 | recv_dup_br_2 | `claimed_row.get("model_number", barcode)` → `…get("model_number", )` — same reasoning as recv_dup_br_1; default argument omitted but also unreachable. |
 | recv_dup_br_3 | `claimed_row.get("model_number", barcode)` → `…get(None, barcode)` — key mutated to None; `.get(None, barcode)` returns `barcode`, which equals `claimed_row["model_number"]` by the exact-match invariant (`c["model_number"] == barcode` was the selection criterion). Observable value identical. |
 | recv_dup_br_4 | `claimed_row.get("model_number", barcode)` → `…get("XXmodel_numberXX", barcode)` — garbled key; fallback returns `barcode` = `model_number` (same as recv_dup_br_3 reasoning). |
 | recv_dup_br_5 | `claimed_row.get("model_number", barcode)` → `…get("MODEL_NUMBER", barcode)` — wrong-case key; dict keys are lowercase, fallback returns `barcode` = `model_number` (same reasoning). |
+
+---
+
+## Category G: Exact-match normalizer case direction (T2b addition)
+
+| Mutant ID | Description |
+|-----------|-------------|
+| x__norm_model__mutmut_9 | `s.upper()` → `s.lower()` in `_norm_model` — both sides of every comparison go through `_norm_model`, so uppercasing and lowercasing are equivalent: the normalized forms always agree. Observable only if a caller compared one normalized string against a hardcoded case-literal, which nothing does. |
+| x_resolve_model__mutmut_13 | `candidates=[]` → `` (omit kwarg) in `MatchResult(AUTO, ...)` — `candidates` has `field(default_factory=list)` whose value is `[]`; passing `candidates=[]` explicitly and omitting it are identical. |
 
 ---
 

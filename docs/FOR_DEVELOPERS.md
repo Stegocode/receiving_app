@@ -63,7 +63,7 @@ core/
   errors.py         typed error taxonomy (ConfigError, SyncKillError, etc.)
   ports.py          Protocol classes for every I/O boundary
   schema.py         ReceivingRecord dataclass; validate_record(); SCHEMA_VERSION
-  matching.py       strip_ean14(), normalize(), find_best_match() (≥ 0.85 threshold)
+  matching.py       exact_model_match(), resolve_exact(), model_matches_barcode(), resolve_model()
   logging_setup.py  setup_logging(log_dir) — midnight-rotating handler
 
 services/

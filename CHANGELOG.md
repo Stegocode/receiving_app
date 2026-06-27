@@ -34,6 +34,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — fix/exact-model-match (T2b)
+
+### Changed
+
+**Fuzzy matching replaced with exact normalized match (T2b)**
+- `core/matching.py`: removed `find_best_match`, `match_score`, `normalize`,
+  `strip_ean14`, and the `difflib` import. Added `exact_model_match(a, b)` (delegates
+  to `normalize_key`: case-fold + strip spaces/hyphens, then string equality) and
+  `resolve_exact(barcode, candidates)` (returns the single exact match or `None` —
+  never guesses). The two-tier `resolve_model` and `model_matches_barcode` from T2a
+  are retained; `_norm_model` private helper deleted in favour of the shared
+  `normalize_key` canonical normalizer.
+- `services/receive.py`: rewired from `find_best_match` to `resolve_exact`. A scan
+  that does not produce an exact match falls through to `no_match` unchanged.
+- `adapters/receiver.py`: rewired `_model_matches` from fuzzy scoring (0.85 threshold
+  + substring shortcuts) to `exact_model_match`. Substring shortcuts (`b in a`,
+  `a in b`) deleted — they were the proximate cause of near-twin SKU collisions on
+  the portal grid.
+
+**Root cause:** near-twin model numbers (e.g. SHX78CM5N / SHP78CM5N) scored above
+the 0.6 / 0.85 thresholds and caused a serial to be bound to the wrong catalog row
+on a live PO. Exact normalized equality eliminates false-positive matches by
+construction.
+
+---
+
 ## [0.1.0] — 2026-06-22
 
 Initial complete release: scanner desk application, catalog refresh utility,

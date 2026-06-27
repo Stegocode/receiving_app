@@ -1,27 +1,16 @@
 """
-Owns: pure barcode/model matching functions (strip, normalize, score, find_best,
+Owns: pure barcode/model matching functions (exact normalized match,
       forward-only sequence matcher, PO-level resolver).
 Must not: perform any I/O; must not import adapters, services, or read environment variables.
-May import: stdlib (difflib, dataclasses, enum).
+May import: stdlib (dataclasses, enum).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from enum import Enum
 
-
-def strip_ean14(barcode: str) -> str:
-    """Strip the leading '0' from a 14-digit EAN-14 barcode; return unchanged otherwise."""
-    if len(barcode) == 14 and barcode.isdigit() and barcode.startswith("0"):
-        return barcode[1:]
-    return barcode
-
-
-def normalize(s: str) -> str:
-    """Lowercase, strip leading/trailing whitespace, collapse internal whitespace."""
-    return " ".join(s.split()).lower()
+# ── Exact normalized match ─────────────────────────────────────────────────────
 
 
 def normalize_key(s: str) -> str:
@@ -35,41 +24,23 @@ def normalize_key(s: str) -> str:
     return s.lower().replace("-", "").replace(" ", "")
 
 
-def match_score(barcode: str, candidate_model: str) -> float:
-    """SequenceMatcher ratio on normalized forms of barcode and candidate_model."""
-    a = normalize(barcode)
-    b = normalize(candidate_model)
-    return SequenceMatcher(None, a, b).ratio()
+def exact_model_match(a: str, b: str) -> bool:
+    """True iff both strings are identical under normalize_key (case-fold, strip spaces/hyphens).
 
-
-def find_best_match(
-    barcode: str,
-    candidates: list[str],
-    threshold: float = 0.6,
-) -> tuple[str | None, float]:
-    """Return (best_match, score) or (None, 0.0) if no candidate scores at or above threshold.
-
-    Applies strip_ean14 to barcode before scoring. Ties go to the first
-    candidate in the list — deterministic, no random tiebreak.
+    Returns False (fail-closed) when either argument is empty after normalization.
     """
-    if not candidates:
-        return None, 0.0
+    na = normalize_key(a)
+    nb = normalize_key(b)
+    return bool(na) and bool(nb) and na == nb
 
-    processed = strip_ean14(barcode)
-    if not normalize(processed):
-        return None, 0.0
 
-    best_match: str | None = None
-    best_score = 0.0
-    for candidate in candidates:
-        score = match_score(processed, candidate)
-        if score > best_score:
-            best_score = score
-            best_match = candidate
+def resolve_exact(barcode: str, candidates: list[str]) -> str | None:
+    """Return the single candidate that exactly matches barcode (normalized), or None.
 
-    if best_score < threshold:
-        return None, 0.0
-    return best_match, best_score
+    Returns None when zero or two-or-more candidates match. Never guesses.
+    """
+    matched = [c for c in candidates if exact_model_match(barcode, c)]
+    return matched[0] if len(matched) == 1 else None
 
 
 # ── Forward-only sequence matcher ─────────────────────────────────────────────

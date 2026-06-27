@@ -25,7 +25,7 @@ import hashlib
 import logging
 from datetime import datetime
 
-from core.matching import find_best_match
+from core.matching import resolve_exact
 from core.ports import Repository, ResultSink
 from core.schema import ReceivingRecord, from_dict
 
@@ -157,7 +157,10 @@ def process_scan(
     Duplicate path exits early: no save, no emit, no mark_emitted.
     """
     candidates = repository.unclaimed_for_po(po_number)
-    best_model, _ = find_best_match(barcode, [c["model_number"] for c in candidates])
+    # Deduplicate model strings: multiple unclaimed units may share one model number.
+    # resolve_exact returns None on two-or-more distinct matches; passing unique models
+    # ensures the guard fires only when different models collide, not on repeated slots.
+    best_model = resolve_exact(barcode, list(dict.fromkeys(c["model_number"] for c in candidates)))
 
     matched = (
         next((c for c in candidates if c["model_number"] == best_model), None)
