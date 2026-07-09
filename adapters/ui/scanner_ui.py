@@ -2,10 +2,12 @@
 Owns: Tkinter desktop UI for the barcode scanner receiving workflow.
 Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3,
           playwright, or selenium. Services and printer come in via injection.
-May import: tkinter, core.schema, core.errors, core.ports, adapters.scanner,
-            adapters.ui.controller, adapters.ui.scan_states.
+May import: tkinter, core.schema, core.errors, core.model_resolution, core.ports,
+            adapters.scanner, adapters.ui.controller, adapters.ui.scan_states,
+            adapters.ui.blocking_states.
 
-Scope: single-writer, single-machine. Scan flow: IDLE→MID_SCAN→MATCHING→SYNC_STOPPED.
+Scope: single-writer, single-machine.
+Scan flow: IDLE→RESOLVING→(MID_SCAN|PROPOSE|NEEDS_MODEL)→MATCHING→SYNC_STOPPED.
 PO labels ("PO:{n}") switch the locked PO without triggering a model match.
 
 not_measured: live Tk rendering, real cross-process timing, 1500 ms poll accuracy.
@@ -20,36 +22,37 @@ from datetime import datetime
 from tkinter import scrolledtext
 
 from adapters.scanner import make_scanner
-from adapters.ui import scan_states
+from adapters.ui import blocking_states, scan_states
+from adapters.ui import scanner_ui_builder as _builder
 from adapters.ui.controller import ScanOutcome, handle_scan
 from adapters.ui.scan_states import (
-    C_ACCENT,
     C_BAR,
     C_DIM,
     C_IDLE,
-    C_INPUT_BG,
     C_LEFT,
-    C_LOG_BG,
     C_WHITE,
     F_BOTTOM,
-    F_LABEL,
-    F_LOG,
-    F_PO_ENTRY,
-    F_PO_LIST,
-    F_SECONDARY,
-    F_SECTION,
-    F_STATE,
-    F_TITLE,
     _note_poll_error,
     _populate_and_queue,
 )
+from core.model_resolution import ModelScanResult, ScanVerdict
 from core.ports import Printer, SyncStatusStore
 from core.schema import ReceivingRecord
 
 
 class ReceivingUI:
+    # Declared here because they are assigned by scanner_ui_builder, not __init__.
+    _po_var: tk.StringVar
+    _po_input: tk.Entry
+    _log_widget: scrolledtext.ScrolledText
+    _po_list: tk.Text
+    _center: tk.Frame
+    _state_lbl: tk.Label
+    _sec_lbl: tk.Label
+    _reset_btn: tk.Button
     _manual_model_entry: tk.Entry
     _manual_serial_entry: tk.Entry
+    _needs_model_entry: tk.Entry
 
     def __init__(
         self,
@@ -58,12 +61,18 @@ class ReceivingUI:
         scanner_type: str,
         populate: Callable[[str], None] | None = None,
         sync_status_store: SyncStatusStore | None = None,
+        resolve_model: Callable[[str, str], ModelScanResult] | None = None,
+        check_model_on_po: Callable[[str, str], bool] | None = None,
+        save_mapping: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._process = process
         self._printer = printer
         self._scanner_type = scanner_type
         self._populate = populate
         self._sync_status_store = sync_status_store
+        self._resolve_model = resolve_model
+        self._check_model_on_po = check_model_on_po
+        self._save_mapping = save_mapping
 
     def run(self) -> None:
         root = tk.Tk()
@@ -72,6 +81,8 @@ class ReceivingUI:
         self._current_po = ""
         self._active_pos: list[str] = []
         self._model_scan: str | None = None
+        self._pending_barcode: str | None = None
+        self._proposed_model: str | None = None
         self._flash_after_id: str | None = None
         self._alarm_event = threading.Event()
         self._dismissed_sync_stop_at: str | None = None
@@ -92,6 +103,7 @@ class ReceivingUI:
                 scan_entry,
                 self._manual_model_entry,
                 self._manual_serial_entry,
+                self._needs_model_entry,
             )
 
             _fault_logged: list[bool] = [False]
@@ -135,120 +147,17 @@ class ReceivingUI:
         self._build_right()
 
     def _build_left(self) -> None:
-        p = self._left
-        tk.Label(p, text="RECEIVING SCANNER", bg=C_LEFT, fg=C_ACCENT, font=F_TITLE, pady=8).pack(
-            fill="x", padx=12, pady=(10, 0)
-        )
-        tk.Frame(p, bg=C_ACCENT, height=2).pack(fill="x", padx=12)
-        po_wrap = tk.Frame(p, bg=C_LEFT)
-        po_wrap.pack(fill="x", padx=12, pady=(10, 0))
-        tk.Label(po_wrap, text="Add PO #(s)", bg=C_LEFT, fg=C_WHITE, font=F_LABEL).pack(anchor="w")
-        tk.Label(
-            po_wrap,
-            text="comma-separated  e.g. 11782, 11783",
-            bg=C_LEFT,
-            fg=C_DIM,
-            font=("Arial", 10),
-        ).pack(anchor="w")
-        row = tk.Frame(po_wrap, bg=C_LEFT)
-        row.pack(fill="x")
-        self._po_var = tk.StringVar()
-        self._po_input = tk.Entry(
-            row,
-            textvariable=self._po_var,
-            bg=C_INPUT_BG,
-            fg=C_WHITE,
-            insertbackground=C_WHITE,
-            font=F_PO_ENTRY,
-            relief="flat",
-            bd=4,
-        )
-        self._po_input.pack(side="left", fill="x", expand=True)
-        self._po_input.bind("<Return>", self._on_po_submit)
-        tk.Button(
-            row,
-            text="Go",
-            command=self._on_po_submit,
-            bg=C_ACCENT,
-            fg=C_WHITE,
-            font=F_LABEL,
-            relief="flat",
-            padx=10,
-            cursor="hand2",
-        ).pack(side="left", padx=(4, 0))
-        tk.Frame(p, bg="#4A6278", height=1).pack(fill="x", padx=12, pady=8)
-        tk.Label(p, text="STATUS LOG", bg=C_LEFT, fg=C_DIM, font=F_SECTION).pack(fill="x", padx=12)
-        self._log_widget = scrolledtext.ScrolledText(
-            p,
-            state="disabled",
-            wrap="word",
-            bg=C_LOG_BG,
-            fg=C_WHITE,
-            font=F_LOG,
-            relief="flat",
-            bd=0,
-        )
-        self._log_widget.pack(fill="both", expand=True, padx=12, pady=(2, 4))
-        tk.Frame(p, bg="#4A6278", height=1).pack(fill="x", padx=12, pady=(0, 4))
-        tk.Label(p, text="TODAY'S POs", bg=C_LEFT, fg=C_DIM, font=F_SECTION).pack(fill="x", padx=12)
-        self._po_list = tk.Text(
-            p,
-            state="disabled",
-            wrap="none",
-            bg=C_LOG_BG,
-            fg=C_DIM,
-            font=F_PO_LIST,
-            relief="flat",
-            bd=0,
-            height=5,
-        )
-        self._po_list.pack(fill="x", padx=12, pady=(2, 10))
+        _builder.build_left(self, self._left)
 
     def _build_right(self) -> None:
-        p = self._right
-        self._center = tk.Frame(p, bg=C_IDLE)
-        self._center.place(relx=0.5, rely=0.40, anchor="center")
-        self._state_lbl = tk.Label(
-            self._center,
-            text="ADD PO TO BEGIN",
-            font=F_STATE,
-            bg=C_IDLE,
-            fg=C_WHITE,
-            wraplength=700,
-            justify="center",
-        )
-        self._state_lbl.pack()
-        self._sec_lbl = tk.Label(
-            self._center,
-            text="Enter PO number(s) on the left",
-            font=F_SECONDARY,
-            bg=C_IDLE,
-            fg=C_DIM,
-            wraplength=700,
-            justify="center",
-        )
-        self._sec_lbl.pack(pady=(14, 0))
-        self._reset_btn = tk.Button(
-            p,
-            text="Reset",
-            command=self._set_idle,
-            bg="#922B21",
-            fg=C_WHITE,
-            font=("Arial", 14),
-            relief="flat",
-            padx=18,
-            pady=10,
-            cursor="hand2",
-        )
-        scan_states.build_manual_frame(self, p)
+        _builder.build_right(self, self._right)
 
     def _on_scan(self, barcode: str) -> None:
-        if self._state == "MATCHING":
+        if self._state in ("MATCHING", "RESOLVING"):
             return
 
-        # PO barcode intercept — "PO:12345" switches the locked PO in any non-MATCHING state.
-        # PO labels encode "PO:{number}" per the label printer oracle.
         cleaned = barcode.strip()
+        # PO barcode intercept — "PO:12345" switches the locked PO in any non-blocked state.
         if cleaned.upper().startswith("PO:"):
             po_num = cleaned[3:].strip()
             if po_num in self._active_pos:
@@ -257,12 +166,29 @@ class ReceivingUI:
                 self._log(f"PO {po_num} not loaded — enter it in the PO field first")
             return
 
+        # PROPOSE: turnstile — same barcode confirms; anything else re-alerts.
+        if self._state == "PROPOSE":
+            self._root.after(0, blocking_states.handle_propose_scan, self, cleaned)
+            return
+
+        # NEEDS_MODEL: scanner blocked — re-alert so the operator knows to type.
+        if self._state == "NEEDS_MODEL":
+            self._root.after(0, blocking_states.handle_needs_model_scan, self)
+            return
+
         if self._state in ("IDLE", "MATCH_FOUND"):
             if not self._current_po:
                 self._log("Add a PO number first")
                 return
-            self._model_scan = cleaned
-            self._root.after(0, scan_states.set_mid_scan, self, cleaned)
+            if self._resolve_model is not None:
+                self._pending_barcode = cleaned
+                self._state = "RESOLVING"
+                threading.Thread(
+                    target=self._run_resolution, args=(cleaned, self._current_po), daemon=True
+                ).start()
+            else:
+                self._model_scan = cleaned
+                self._root.after(0, scan_states.set_mid_scan, self, cleaned)
             return
 
         if self._state == "MID_SCAN":
@@ -281,6 +207,25 @@ class ReceivingUI:
         scan_states.set_idle(self)
         self._log(f"PO switched to {po_number} — scan model")
         threading.Thread(target=self._print_po_label_bg, args=(po_number,), daemon=True).start()
+
+    def _run_resolution(self, raw_barcode: str, po: str) -> None:
+        try:
+            result = self._resolve_model(raw_barcode, po)  # type: ignore[misc]
+        except Exception as exc:
+            self._log(f"ERROR during model resolution: {exc}")
+            self._root.after(0, self._set_idle)
+            return
+        self._root.after(0, self._apply_verdict, result, raw_barcode)
+
+    def _apply_verdict(self, result: ModelScanResult, raw_barcode: str) -> None:
+        if result.verdict == ScanVerdict.AUTO:
+            self._model_scan = result.model
+            scan_states.set_mid_scan(self, result.model or raw_barcode)
+        elif result.verdict == ScanVerdict.PROPOSE:
+            self._proposed_model = result.model
+            blocking_states.set_propose(self, raw_barcode, result.model or "")
+        else:
+            blocking_states.set_needs_model(self, raw_barcode)
 
     def _run_match(self, model: str, serial: str, po: str) -> None:
         try:
