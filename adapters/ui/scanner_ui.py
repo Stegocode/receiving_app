@@ -37,6 +37,7 @@ from adapters.ui.scan_states import (
 )
 from core.model_resolution import ModelScanResult, ScanVerdict
 from core.ports import Printer, SyncStatusStore
+from core.scan_dispatch import ScanActionKind, decide_scan_action
 from core.schema import ReceivingRecord
 
 
@@ -153,47 +154,38 @@ class ReceivingUI:
         _builder.build_right(self, self._right)
 
     def _on_scan(self, barcode: str) -> None:
-        if self._state in ("MATCHING", "RESOLVING"):
+        action = decide_scan_action(
+            self._state,
+            barcode.strip(),
+            bool(self._current_po),
+            self._resolve_model is not None,
+            self._active_pos,
+        )
+        if action.kind == ScanActionKind.DROP_BUSY:
             return
-
-        cleaned = barcode.strip()
-        # PO barcode intercept — "PO:12345" switches the locked PO in any non-blocked state.
-        if cleaned.upper().startswith("PO:"):
-            po_num = cleaned[3:].strip()
-            if po_num in self._active_pos:
-                self._root.after(0, self._lock_po, po_num)
-            else:
-                self._log(f"PO {po_num} not loaded — enter it in the PO field first")
-            return
-
-        # PROPOSE: turnstile — same barcode confirms; anything else re-alerts.
-        if self._state == "PROPOSE":
-            self._root.after(0, blocking_states.handle_propose_scan, self, cleaned)
-            return
-
-        # NEEDS_MODEL: scanner blocked — re-alert so the operator knows to type.
-        if self._state == "NEEDS_MODEL":
+        if action.kind == ScanActionKind.TURNSTILE:
+            self._root.after(0, blocking_states.handle_propose_scan, self, action.payload or "")
+        elif action.kind == ScanActionKind.BLOCKED_REALERT:
             self._root.after(0, blocking_states.handle_needs_model_scan, self)
-            return
-
-        if self._state in ("IDLE", "MATCH_FOUND"):
-            if not self._current_po:
-                self._log("Add a PO number first")
-                return
-            if self._resolve_model is not None:
-                self._pending_barcode = cleaned
-                self._state = "RESOLVING"
-                threading.Thread(
-                    target=self._run_resolution, args=(cleaned, self._current_po), daemon=True
-                ).start()
-            else:
-                self._model_scan = cleaned
-                self._root.after(0, scan_states.set_mid_scan, self, cleaned)
-            return
-
-        if self._state == "MID_SCAN":
+        elif action.kind == ScanActionKind.PO_SWITCH:
+            self._root.after(0, self._lock_po, action.payload or "")
+        elif action.kind == ScanActionKind.PO_NOT_LOADED:
+            self._log(f"PO {action.payload} not loaded — enter it in the PO field first")
+        elif action.kind == ScanActionKind.NEED_PO:
+            self._log("Add a PO number first")
+        elif action.kind == ScanActionKind.RESOLVE:
+            cleaned = action.payload or ""
+            self._pending_barcode = cleaned
+            self._state = "RESOLVING"
+            threading.Thread(
+                target=self._run_resolution, args=(cleaned, self._current_po), daemon=True
+            ).start()
+        elif action.kind == ScanActionKind.MID_SCAN_DIRECT:
+            self._model_scan = action.payload
+            self._root.after(0, scan_states.set_mid_scan, self, action.payload or "")
+        elif action.kind == ScanActionKind.SERIAL_MATCH:
             model = self._model_scan or ""
-            serial = cleaned
+            serial = action.payload or ""
             self._state = "MATCHING"
             self._root.after(0, self._state_lbl.configure, {"text": "MATCHING…", "fg": C_WHITE})
             self._root.after(0, self._sec_lbl.configure, {"text": f"Serial: {serial}", "fg": C_DIM})
