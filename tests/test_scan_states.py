@@ -78,6 +78,7 @@ class _FakeUI:
         self._center = _FakeWidget()
         self._state_lbl = _FakeWidget()
         self._sec_lbl = _FakeWidget()
+        self._needs_model_frame = _FakeWidget()
         self._root = _FakeRoot()
         self._idle_called = False
         self._last_sync_stop_at: str | None = None

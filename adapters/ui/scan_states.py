@@ -5,7 +5,7 @@ Must not: import services, adapters.db, adapters.sink, adapters.source, sqlite3.
 May import: core.schema, core.ports, collections.abc, sys, threading, time, tkinter.
 
 State markers: IDLE, MID_SCAN, MATCHING, MATCH_FOUND, NO_MATCH, PRINT_FAILED,
-               ALREADY_SCANNED, SYNC_STOPPED.
+               ALREADY_SCANNED, SYNC_STOPPED, PROPOSE, NEEDS_MODEL.
 """
 
 from __future__ import annotations
@@ -178,7 +178,8 @@ def set_already_scanned(ui: Any, record: ReceivingRecord) -> None:
 
 
 def dismiss_no_match(ui: Any) -> None:
-    if ui._state in ("NO_MATCH", "PRINT_FAILED", "ALREADY_SCANNED"):
+    if ui._state in ("NO_MATCH", "PRINT_FAILED", "ALREADY_SCANNED", "PROPOSE", "NEEDS_MODEL"):
+        ui._needs_model_frame.place_forget()  # idempotent hide of entry overlay
         ui._set_idle()
     elif ui._state == "SYNC_STOPPED":
         dismiss_sync_stopped(ui)

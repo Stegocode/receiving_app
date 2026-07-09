@@ -4,7 +4,8 @@ Owns: scanner/receiving application entry point — wire all adapters from confi
 Must not: contain business logic; must not read environment variables directly;
           must not import tkinter.
 May import: config, core.logging_setup, adapters.db, adapters.printer, adapters.sink,
-            adapters.source, adapters.ui.scanner_ui, services.receive, services.populate.
+            adapters.source, adapters.ui.scanner_ui, services.receive, services.populate,
+            services.model_resolution.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from adapters.sink import make_sink
 from adapters.source import make_source
 from adapters.ui.scanner_ui import ReceivingUI
 from core.logging_setup import setup_logging
+from services.model_resolution import check_model_on_po, resolve_model_barcode
 from services.populate import populate_po
 from services.receive import process_scan
 
@@ -60,6 +62,11 @@ def build_app() -> ReceivingUI:
         printer=printer,
         scanner_type=config.SCANNER_TYPE,
         populate=lambda po: populate_po(po, repo, source),
+        resolve_model=lambda barcode, po: resolve_model_barcode(barcode, po, repo),
+        check_model_on_po=lambda model, po: check_model_on_po(model, po, repo),
+        save_mapping=lambda barcode, model, src: repo.save_barcode_mapping(
+            barcode, model, 0.0, src
+        ),
     )
 
 
